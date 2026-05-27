@@ -8,11 +8,6 @@
     python main.py --query "什么是VPC"  # 单次查询模式
 """
 
-"""
- * 小滴课堂,愿景：让技术不再难学
- * @Remark 有问题联系我【xdclass68】
- * 源码-笔记-技术交流群,官网 https://xdclass.net
-"""
 import argparse
 import asyncio
 import logging
