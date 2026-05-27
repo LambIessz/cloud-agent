@@ -1,7 +1,0 @@
-llm_pricing:
-  qwen-plus:
-    prompt_usd_per_1k: 0.5
-    completion_usd_per_1k: 1.5
-  unknown:
-    prompt_usd_per_1k: 0
-    completion_usd_per_1k: 0
