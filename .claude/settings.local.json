@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"c:/Users/LambIessz/Desktop/企业级ai应用/\" 2>/dev/null || ls -la \"/c/Users/LambIessz/Desktop/企业级ai应用/\" 2>/dev/null || find \"/Users/bofx0o\" -maxdepth 3 -type f 2>/dev/null | head -50)",
+      "Read(//Users/**)",
+      "Bash(ls \"/c/Users/LambIessz/.claude/projects/c--Users-LambIessz-Desktop----ai--/memory/\" 2>/dev/null)",
+      "Read(//c/Users/LambIessz/.claude/projects/c--Users-LambIessz-Desktop----ai--/memory//**)",
+      "Bash(ls -la *.env .env*)",
+      "Bash(ls app/app_config/ agent/config/)",
+      "Bash(which python *)",
+      "Bash(python --version)",
+      "Bash(python -c \"import fastapi, uvicorn, pydantic_settings; print\\('FastAPI:', fastapi.__version__\\)\")",
+      "Bash(curl -s http://localhost:5000/docs -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
+      "Read(//tmp/**)",
+      "Bash(ls node_modules/.bin/vite)",
+      "Bash(npm --version)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5173/ -o /dev/null -w \"Frontend HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:5000/docs -o /dev/null -w \"Backend HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:5000/openapi.json)",
+      "Bash(python -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\('API routes:', list\\(d.get\\('paths', {}\\).keys\\(\\)\\)[:10]\\)\")",
+      "Bash(curl -s http://localhost:5000/api/metrics)",
+      "Bash(awk -F'{' '{print $1}')",
+      "Bash(curl -s http://localhost:5000/api/metrics -o /tmp/metrics_now.txt -w \"HTTP %{http_code} bytes=%{size_download}\\\\n\")",
+      "Bash(curl -sS -N -X POST http://localhost:5000/api/chat -H 'Content-Type: application/json' -H 'X-User-Id: smoke_user_001' -H 'X-Tenant-Id: smoke_tenant' -d '{\"query\":\"今天天气怎么样？\",\"session_id\":\"smoke_session_001\"}' --max-time 60)",
+      "Bash(curl -sS -N -X POST http://localhost:5000/api/chat -H 'Content-Type: application/json; charset=utf-8' -H 'X-User-Id: smoke_user_001' -H 'X-Tenant-Id: smoke_tenant' --data-binary @/c/Users/LambIessz/Desktop/企业级ai应用/.claude/smoke_chat.json --max-time 90)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}

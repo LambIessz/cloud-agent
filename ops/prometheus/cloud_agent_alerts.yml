@@ -1,0 +1,245 @@
+groups:
+  - name: cloud_agent.rules
+    rules:
+      - alert: CloudAgentMetricsScrapeDown
+        expr: up{job="cloud_agent"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent metrics endpoint is down
+          description: Prometheus cannot scrape GET /api/metrics for 2 minutes.
+
+      - alert: CloudAgentRequestErrorRateHigh
+        expr: |
+          (
+            sum(rate(cloud_agent_request_error_total{job="cloud_agent",operation="stream_chat"}[5m]))
+            or vector(0)
+          )
+          /
+          clamp_min(
+            sum(rate(cloud_agent_request_total{job="cloud_agent",operation="stream_chat"}[5m])),
+            1
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent request error rate is high
+          description: stream_chat request error rate is above 5% for 10 minutes.
+
+      - alert: CloudAgentRequestAverageLatencyHigh
+        expr: |
+          sum(rate(cloud_agent_request_latency_ms_sum{job="cloud_agent",operation="stream_chat"}[5m]))
+          /
+          clamp_min(
+            sum(rate(cloud_agent_request_latency_ms_count{job="cloud_agent",operation="stream_chat"}[5m])),
+            1
+          ) > 3000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent request average latency is high
+          description: stream_chat average latency is above 3000 ms for 10 minutes.
+
+      - alert: CloudAgentFallbackRouteRateHigh
+        expr: |
+          (
+            sum(rate(cloud_agent_route_fallback_total{job="cloud_agent"}[5m]))
+            or vector(0)
+          )
+          /
+          clamp_min(
+            sum(rate(cloud_agent_route_total{job="cloud_agent"}[5m])),
+            1
+          ) > 0.20
+        for: 15m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent fallback route rate is high
+          description: More than 20% of route decisions go to fallback_agent.
+
+      - alert: CloudAgentSemanticCacheUnavailable
+        expr: |
+          (
+            sum(increase(cloud_agent_semantic_cache_unavailable_total{job="cloud_agent"}[10m]))
+            or vector(0)
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent semantic cache is unavailable
+          description: Semantic cache reported unavailable events in the last 10 minutes.
+
+      - alert: CloudAgentMemoryDegraded
+        expr: |
+          (
+            sum(increase(cloud_agent_memory_degraded_total{job="cloud_agent"}[10m]))
+            or vector(0)
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent memory path degraded
+          description: Redis, Milvus, or background extraction emitted degraded or unavailable memory events.
+
+      - alert: CloudAgentLLMErrorRateHigh
+        expr: |
+          (
+            sum(rate(cloud_agent_llm_error_total{job="cloud_agent"}[5m]))
+            or vector(0)
+          )
+          /
+          clamp_min(
+            sum(rate(cloud_agent_llm_call_total{job="cloud_agent"}[5m])),
+            1
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent LLM error rate is high
+          description: LLM error rate is above 5% for 10 minutes.
+
+      - alert: CloudAgentLLMAverageLatencyHigh
+        expr: |
+          sum(rate(cloud_agent_llm_latency_ms_sum{job="cloud_agent"}[5m]))
+          /
+          clamp_min(
+            sum(rate(cloud_agent_llm_latency_ms_count{job="cloud_agent"}[5m])),
+            1
+          ) > 5000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent LLM average latency is high
+          description: LLM average latency is above 5000 ms for 10 minutes.
+
+      - alert: CloudAgentMCPToolErrorRateHigh
+        expr: |
+          sum by (tool_name) (
+            rate(cloud_agent_tool_error_total{job="cloud_agent"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (tool_name) (
+              rate(cloud_agent_tool_call_total{job="cloud_agent"}[5m])
+            ),
+            1
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent MCP tool error rate is high
+          description: One or more MCP tools have error rate above 5% for 10 minutes.
+
+      - alert: CloudAgentMCPToolAverageLatencyHigh
+        expr: |
+          sum by (tool_name) (
+            rate(cloud_agent_tool_latency_ms_sum{job="cloud_agent"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (tool_name) (
+              rate(cloud_agent_tool_latency_ms_count{job="cloud_agent"}[5m])
+            ),
+            1
+          ) > 3000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent MCP tool average latency is high
+          description: One or more MCP tools have average latency above 3000 ms for 10 minutes.
+
+      - alert: CloudAgentRequestP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(cloud_agent_request_duration_ms_bucket{job="cloud_agent",operation="stream_chat"}[5m])
+            )
+          ) > 5000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent request p95 latency is high
+          description: stream_chat request p95 latency is above 5000 ms for 10 minutes.
+
+      - alert: CloudAgentLLMP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(cloud_agent_llm_duration_ms_bucket{job="cloud_agent"}[5m])
+            )
+          ) > 10000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent LLM p95 latency is high
+          description: LLM p95 latency is above 10000 ms for 10 minutes.
+
+      - alert: CloudAgentMCPToolP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (tool_name, le) (
+              rate(cloud_agent_tool_duration_ms_bucket{job="cloud_agent"}[5m])
+            )
+          ) > 5000
+        for: 10m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent MCP tool p95 latency is high
+          description: One or more MCP tools have p95 latency above 5000 ms for 10 minutes.
+
+      - alert: CloudAgentDegradationBurst
+        expr: |
+          (
+            sum(increase(cloud_agent_degradation_total{job="cloud_agent"}[10m]))
+            or vector(0)
+          ) > 5
+        for: 1m
+        labels:
+          severity: warning
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent degradation events increased
+          description: More than 5 degradation events were emitted in 10 minutes.
+
+      - alert: CloudAgentMCPRegistryInitializeFailed
+        expr: |
+          (
+            sum(increase(cloud_agent_mcp_registry_error_total{job="cloud_agent"}[10m]))
+            or vector(0)
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: cloud_agent
+        annotations:
+          summary: cloud_agent MCP registry initialization failed
+          description: MCP registry emitted initialization errors in the last 10 minutes.

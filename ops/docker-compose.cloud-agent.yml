@@ -1,0 +1,120 @@
+services:
+  cloud_agent:
+    build:
+      context: ..
+      dockerfile: cloud_agent/Dockerfile
+    image: cloud-agent:local
+    container_name: cloud_agent_app
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
+    ports:
+      - "5000:5000"
+    environment:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      CLOUD_AGENT_LLM_PRICING_CONFIG: /app/ops/prometheus/llm_pricing.example.yml
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_KEY_FILE: ${DEEPSEEK_API_KEY_FILE:-}
+      BASE_URL: ${BASE_URL:-https://api.deepseek.com}
+      MODEL: ${MODEL:-deepseek-chat}
+      REDIS_URL: redis://redis:6379
+      REDIS_TTL: ${REDIS_TTL:-1800}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cloud_platform}
+      MYSQL_USER: ${MYSQL_USER:-cloud_agent}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_PASSWORD_FILE: ${MYSQL_PASSWORD_FILE:-}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_PASSWORD_FILE: ${NEO4J_PASSWORD_FILE:-}
+      NEO4J_DATABASE: neo4j
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_API_KEY_FILE: ${DASHSCOPE_API_KEY_FILE:-}
+      MILVUS_API_KEY: ${MILVUS_API_KEY:-}
+      MILVUS_API_KEY_FILE: ${MILVUS_API_KEY_FILE:-}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
+      OPENWEATHER_API_KEY_FILE: ${OPENWEATHER_API_KEY_FILE:-}
+      CLOUD_AGENT_AUTH_STRATEGY: ${CLOUD_AGENT_AUTH_STRATEGY:-gateway}
+      CLOUD_AGENT_AUTH_JWT_SECRET: ${CLOUD_AGENT_AUTH_JWT_SECRET:-}
+      CLOUD_AGENT_AUTH_JWT_SECRET_FILE: ${CLOUD_AGENT_AUTH_JWT_SECRET_FILE:-}
+      CLOUD_AGENT_AUTH_JWT_ALGORITHMS: ${CLOUD_AGENT_AUTH_JWT_ALGORITHMS:-HS256}
+      CLOUD_AGENT_AUTH_OIDC_ALGORITHMS: ${CLOUD_AGENT_AUTH_OIDC_ALGORITHMS:-RS256}
+      CLOUD_AGENT_AUTH_JWT_ISSUER: ${CLOUD_AGENT_AUTH_JWT_ISSUER:-}
+      CLOUD_AGENT_AUTH_JWT_AUDIENCE: ${CLOUD_AGENT_AUTH_JWT_AUDIENCE:-}
+      CLOUD_AGENT_AUTH_JWT_USER_CLAIM: ${CLOUD_AGENT_AUTH_JWT_USER_CLAIM:-sub}
+      CLOUD_AGENT_AUTH_JWT_TENANT_CLAIM: ${CLOUD_AGENT_AUTH_JWT_TENANT_CLAIM:-tenant_id}
+      CLOUD_AGENT_AUTH_JWKS_URL: ${CLOUD_AGENT_AUTH_JWKS_URL:-}
+      CLOUD_AGENT_AUTH_OIDC_DISCOVERY_URL: ${CLOUD_AGENT_AUTH_OIDC_DISCOVERY_URL:-}
+      CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS: ${CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS:-300}
+      CLOUD_AGENT_AUTH_JWKS_TIMEOUT_SECONDS: ${CLOUD_AGENT_AUTH_JWKS_TIMEOUT_SECONDS:-5}
+      CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR: ${CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR:-false}
+    volumes:
+      - cloud_agent_milvus_cache:/app/cloud_agent/agent/milvus_lite_cache.db
+      - cloud_agent_milvus_cloud:/app/cloud_agent/agent/milvus_lite_cloud.db
+      - cloud_agent_milvus_memory:/app/cloud_agent/agent/milvus_lite_memory.db
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/readyz', timeout=5).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: cloud_agent_redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mysql:
+    image: mysql:8.4
+    container_name: cloud_agent_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cloud_platform}
+      MYSQL_USER: ${MYSQL_USER:-cloud_agent}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../cloud_agent/agent/database/init_mock_data.sql:/docker-entrypoint-initdb.d/001-init-mock-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$${MYSQL_USER}\" -p\"$${MYSQL_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: cloud_agent_neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  cloud_agent_milvus_cache:
+  cloud_agent_milvus_cloud:
+  cloud_agent_milvus_memory:
+  mysql_data:
+  neo4j_data:

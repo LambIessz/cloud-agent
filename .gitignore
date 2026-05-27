@@ -1,0 +1,33 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.pytest_tmp/
+.acceptance/
+
+# Local secrets and environment files.
+.env
+*.env
+cloud_agent/agent/.env
+cloud_agent/app/.env
+ops/cloud_agent.env
+
+# Keep documented examples tracked.
+!.env.example
+!*env.example
+!ops/*.env.example
+
+# Local runtime data.
+cloud_agent/agent/milvus_lite_cache.db/
+cloud_agent/agent/milvus_lite_cloud.db/
+cloud_agent/agent/milvus_lite_memory.db/
+cloud_agent/agent/*.db/
+
+# Frontend dependencies.
+cloud_agent/front/**/node_modules/
+deep_research/front/**/node_modules/
+
+*.log
+*.tmp

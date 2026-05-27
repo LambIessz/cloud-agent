@@ -1,0 +1,53 @@
+name: cloud-agent-regression
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-agent-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: canonical pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      CLOUD_AGENT_LLM_PRICING_CONFIG: ${{ github.workspace }}/ops/prometheus/llm_pricing.example.yml
+      DEEPSEEK_API_KEY: ci-placeholder
+      BASE_URL: https://api.deepseek.com
+      MODEL: deepseek-chat
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            cloud_agent/agent/requirements.txt
+            cloud_agent/requirements-container.txt
+            deep_research/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r cloud_agent/requirements-container.txt
+
+      - name: Run canonical regression set
+        run: bash test_all.sh

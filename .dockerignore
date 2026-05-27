@@ -1,0 +1,28 @@
+.DS_Store
+.git
+.pytest_cache
+.pytest_tmp
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local secrets and environment files must not enter images.
+.env
+*.env
+cloud_agent/agent/.env
+cloud_agent/app/.env
+
+# Frontend dependencies are large and are not needed by the backend image.
+cloud_agent/front/**/node_modules/
+deep_research/front/**/node_modules/
+
+# Local Milvus Lite data should be mounted as runtime volumes.
+cloud_agent/agent/milvus_lite_cache.db/
+cloud_agent/agent/milvus_lite_cloud.db/
+cloud_agent/agent/milvus_lite_memory.db/
+cloud_agent/agent/*.db/
+
+# Runtime and OS artifacts.
+*.log
+*.tmp

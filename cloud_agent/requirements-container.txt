@@ -1,0 +1,2 @@
+# Container builds use the same backend/Agent runtime dependency set as CI.
+-r agent/requirements.txt

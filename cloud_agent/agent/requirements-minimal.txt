@@ -1,0 +1,38 @@
+# ================================================================
+# Minimal requirements for cloud_agent — fallback/LLM routing only.
+#
+# Omits torch, sentence-transformers (embedding), neo4j (knowledge
+# graph), milvus-lite, pyarrow.  Backend starts in ~100 MB instead
+# of ~2 GB; memory/cache paths degrade gracefully with no crash.
+#
+# See requirements.txt for the full production dependency set.
+# ================================================================
+
+langchain>=1.2.0,<2.0.0
+langchain-core>=1.3.0,<2.0.0
+langchain-community>=0.4.0,<0.5.0
+langgraph>=1.1.0,<2.0.0
+langgraph-prebuilt>=1.0.0,<2.0.0
+
+langchain-openai>=1.0.0,<2.0.0
+langchain-huggingface>=1.0.0,<2.0.0
+
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+PyJWT[crypto]>=2.8.0,<3.0.0
+
+mcp>=1.0.0,<2.0.0
+langchain-mcp-adapters>=0.2.0,<0.3.0
+dashscope>=1.20.0,<2.0.0
+
+pydantic>=2.0.0,<3.0.0
+pydantic-settings>=2.0.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+httpx>=0.27.0,<1.0.0
+requests>=2.32.0,<3.0.0
+PyYAML>=6.0.0,<7.0.0
+
+redis>=5.0.0,<8.0.0
+pymysql>=1.1.0,<2.0.0
+
+structlog>=24.0.0,<26.0.0
