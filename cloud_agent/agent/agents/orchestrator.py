@@ -145,11 +145,11 @@ class OrchestratorAgent:
             "旅游", "机票", "酒店", "星座", "笑话",
         ]
         cloud_business_keywords = [
-            "咨询", "介绍", "说明", "查询", "查", "账单", "订单", "实例", "推荐",
+            "咨询", "介绍", "说明", "查询", "查", "账单", "订单", "实例",
             "选型", "推广", "返佣", "故障", "排查", "连接", "端口", "成本", "降本",
             "优化", "规格", "限制", "上限", "配额",
         ]
-        if self._has_any(text, out_of_scope_keywords) and not self._has_any(text, cloud_keywords):
+        if self._has_any(text, out_of_scope_keywords) and not self._has_any(text, cloud_business_keywords):
             return self._build_route_result(
                 "fallback_agent",
                 metadata,
