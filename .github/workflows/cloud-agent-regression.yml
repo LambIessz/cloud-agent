@@ -47,6 +47,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
 
       - name: Install Python dependencies
         run: |
@@ -58,7 +60,6 @@ jobs:
       - name: Install frontend dependencies
         working-directory: cloud_agent/front/cloud_agent
         run: |
-          export npm_config_cache="${RUNNER_TEMP}/npm-cache"
           for attempt in 1 2 3; do
             npm ci --registry=https://registry.npmjs.org --no-audit --fund=false --prefer-offline && exit 0
             if [ "$attempt" -lt 3 ]; then
