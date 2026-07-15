@@ -67,11 +67,15 @@ def test_dockerfile_runs_fastapi_with_readyz_healthcheck_and_runtime_requirement
 
     assert "FROM python:3.12-slim" in dockerfile
     assert "WORKDIR /app/cloud_agent/app" in dockerfile
+    assert "adduser --system --ingroup cloudagent" in dockerfile
+    assert "USER cloudagent" in dockerfile
     assert "EXPOSE 5000" in dockerfile
     assert "/readyz" in dockerfile
     assert "uvicorn" in dockerfile
     assert "app_main:app" in dockerfile
     assert "CLOUD_AGENT_LLM_PRICING_CONFIG=/app/ops/prometheus/llm_pricing.example.yml" in dockerfile
+    assert "https://download.pytorch.org/whl/cpu" in requirements
+    assert 'torch==2.13.0+cpu ; platform_system == "Linux"' in requirements
 
     expected_runtime_requirements = {
         "fastapi",
@@ -108,12 +112,21 @@ def test_compose_wires_runtime_dependencies_without_plaintext_secrets():
     assert env["MYSQL_PORT"] == "3306"
     assert env["NEO4J_URI"] == "bolt://neo4j:7687"
     assert env["CLOUD_AGENT_LLM_PRICING_CONFIG"] == "/app/ops/prometheus/llm_pricing.example.yml"
+    assert env["CLOUD_AGENT_SEMANTIC_CACHE_ENABLED"] == "${CLOUD_AGENT_SEMANTIC_CACHE_ENABLED:-false}"
+    assert env["CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED"] == "${CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED:-false}"
+    assert env["CLOUD_AGENT_VECTOR_SEARCH_ENABLED"] == "${CLOUD_AGENT_VECTOR_SEARCH_ENABLED:-false}"
+    assert env["CLOUD_AGENT_KNOWLEDGE_GRAPH_ENABLED"] == "${CLOUD_AGENT_KNOWLEDGE_GRAPH_ENABLED:-false}"
+    assert env["CLOUD_AGENT_BACKGROUND_EXTRACT_ENABLED"] == "${CLOUD_AGENT_BACKGROUND_EXTRACT_ENABLED:-false}"
+    assert env["CLOUD_AGENT_SEMANTIC_CACHE_WRITE_ENABLED"] == "${CLOUD_AGENT_SEMANTIC_CACHE_WRITE_ENABLED:-false}"
+    assert env["CLOUD_AGENT_MCP_PRELOAD"] == "${CLOUD_AGENT_MCP_PRELOAD:-false}"
     assert env["DEEPSEEK_API_KEY"] == "${DEEPSEEK_API_KEY:-}"
     assert env["DEEPSEEK_API_KEY_FILE"] == "${DEEPSEEK_API_KEY_FILE:-}"
     assert env["MYSQL_PASSWORD"] == "${MYSQL_PASSWORD:-}"
     assert env["MYSQL_PASSWORD_FILE"] == "${MYSQL_PASSWORD_FILE:-}"
     assert env["NEO4J_PASSWORD"] == "${NEO4J_PASSWORD:-}"
     assert env["NEO4J_PASSWORD_FILE"] == "${NEO4J_PASSWORD_FILE:-}"
+    assert env["CLOUD_AGENT_AUTH_MODE"] == "${CLOUD_AGENT_AUTH_MODE:-local}"
+    assert env["CLOUD_AGENT_AUTH_STRATEGY"] == "${CLOUD_AGENT_AUTH_STRATEGY:-gateway}"
 
     volumes = set(app["volumes"])
     assert "cloud_agent_milvus_cache:/app/cloud_agent/agent/milvus_lite_cache.db" in volumes
@@ -123,6 +136,8 @@ def test_compose_wires_runtime_dependencies_without_plaintext_secrets():
     mysql = services["mysql"]
     assert mysql["environment"]["MYSQL_ROOT_PASSWORD"] == "${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}"
     assert "../cloud_agent/agent/database/init_mock_data.sql:/docker-entrypoint-initdb.d/001-init-mock-data.sql:ro" in mysql["volumes"]
+
+    assert services["neo4j"]["profiles"] == ["graph"]
 
 
 def test_dockerignore_excludes_local_runtime_data_and_frontend_dependencies():
@@ -140,3 +155,12 @@ def test_dockerignore_excludes_local_runtime_data_and_frontend_dependencies():
     }
     for pattern in expected_ignores:
         assert pattern in dockerignore
+
+
+def test_env_example_and_readme_document_compose_doctor_preflight():
+    env_example = _read(OPS_DIR / "cloud_agent.env.example")
+    readme = _read(PROJECT_ROOT / "README.md")
+
+    assert "CLOUD_AGENT_AUTH_MODE=local" in env_example
+    assert "docker compose --env-file ops/cloud_agent.env -f ops/docker-compose.cloud-agent.yml up -d" in readme
+    assert "python ops/cloud_agent_doctor.py --env-file ops/cloud_agent.env --base-url http://127.0.0.1:5000" in readme

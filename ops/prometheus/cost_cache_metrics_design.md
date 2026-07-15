@@ -374,6 +374,6 @@ CloudAgentCacheEstimatedBenefitDropped
 
 - 非 cache hit 路径尚未把真实 LLM usage 或明确估算 usage 写入 semantic cache 元数据。
 - Prometheus alert rules。
-- Docker / Grafana 实际启动验收。
+- Docker / Grafana 实际启动验收已于 2026-07-13 通过；当前 fake graph smoke 不产生真实 LLM usage、MCP tool 或 cost 样本，仍需在真实业务流量环境观察对应面板。
 
 下一步如果继续成本方向，建议把非 cache hit 的 LLM usage 或明确估算 usage 接入 `set_cache()`，让后续 cache hit 可以产生 saved token / saved cost；仍不要同一步增加告警。

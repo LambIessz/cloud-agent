@@ -1,0 +1,103 @@
+name: cloud-agent-supply-chain
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  schedule:
+    - cron: "30 19 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-agent-supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supply-chain-gate:
+    name: supply chain gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare audit artifacts
+        run: mkdir -p .security-audit
+
+      - name: Scan deployment configuration
+        id: trivy-config
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: config
+          severity: HIGH,CRITICAL
+          format: json
+          output: .security-audit/trivy-config.json
+          exit-code: "1"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            cloud_agent/agent/requirements.txt
+            deep_research/requirements.txt
+
+      - name: Install Python audit tool
+        run: python -m pip install pip-audit==2.10.1
+
+      - name: Audit Cloud Agent Python dependencies
+        id: cloud-agent-pip-audit
+        continue-on-error: true
+        run: pip-audit -r cloud_agent/agent/requirements.txt --format json --output .security-audit/pip-audit-cloud-agent.json
+
+      - name: Audit deep research Python dependencies
+        id: deep-research-pip-audit
+        continue-on-error: true
+        run: pip-audit -r deep_research/requirements.txt --format json --output .security-audit/pip-audit-deep-research.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Audit frontend production dependencies
+        id: npm-audit
+        continue-on-error: true
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high --json > ../../../.security-audit/npm-audit.json
+
+      - name: Enforce blocking audit results
+        run: |
+          test "${{ steps.trivy-config.outcome }}" = "success"
+          test "${{ steps.cloud-agent-pip-audit.outcome }}" = "success"
+          test "${{ steps.deep-research-pip-audit.outcome }}" = "success"
+          test "${{ steps.npm-audit.outcome }}" = "success"
+
+      - name: Upload supply chain reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-audit-reports
+          path: .security-audit/
+          if-no-files-found: ignore
+          retention-days: 14

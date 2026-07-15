@@ -138,11 +138,39 @@ docker compose --env-file ops/cloud_agent.env -f ops/docker-compose.cloud-agent.
 curl http://127.0.0.1:5000/healthz
 ```
 
+Windows compose deployment smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops/cloud_agent_compose_smoke.ps1
+```
+
+The smoke script validates compose config, starts the stack, waits for `/readyz`,
+runs the deployment doctor, writes `.codex-run/compose-doctor.json`, and collects
+compose logs. It removes the full stack when it started every service itself;
+when compose services were already running, it preserves them and removes only
+services started by this smoke run.
+
+The Docker runtime pins the official CPU-only PyTorch wheel. It keeps vector
+features available without resolving CUDA runtime packages in a CPU deployment.
+
 ### 可观测性栈（可选）
 
 ```bash
 # Prometheus + Grafana
 docker compose -f ops/docker-compose.observability.yml up -d
+
+# Ubuntu / CI acceptance (writes .acceptance/<timestamp>/summary.tsv)
+bash ops/ubuntu_ci_acceptance.sh
+
+# Windows or cross-platform runtime acceptance (same summary.tsv contract)
+python ops/observability_acceptance.py --run-chat-smoke --grafana-user admin --grafana-password admin --json
+
+# Require the latest observability result in the release evidence index
+python ops/release_evidence.py --require-observability --json
+
+# Optional: require a completed 24-hour window only on a continuously running
+# staging or production-like host. It is not a local release blocker.
+python ops/release_evidence.py --require-observability --require-observability-window --json
 
 # Grafana: http://127.0.0.1:3000 (admin/admin)
 # Prometheus: http://127.0.0.1:9090
@@ -191,11 +219,60 @@ bash test_all.sh
 # 聚焦认证测试（28 项）
 python -m pytest cloud_agent/agent/test/test_auth_router.py -v
 
-# 运行 OIDC/JWKS smoke
-python ops/auth/real_idp_smoke.py
+# 运行 OIDC/JWKS 认证 smoke（本地真实发现文档 + JWKS + token 校验）
+python ops/auth/real_idp_smoke.py --env-file ops/cloud_agent.env --json
+
+# 发布前聚合门禁：doctor -> SSE -> external -> MCP billing -> memory -> IdP -> hygiene
+python ops/release_gate.py --env-file ops/cloud_agent.env --backend-url http://127.0.0.1:5000 --strict
+
+# 发布证据索引：汇总 release gate、smoke、browser diagnostics 和报告指纹
+python ops/release_evidence.py --json
+
+# Supply-chain gate: GitHub Actions workflow cloud-agent-supply-chain
+# blocks core Python, frontend high/critical, and deployment config findings.
+
+# 运行 Chat SSE smoke（需要后端已启动）
+python ops/chat_sse_smoke.py --backend-url http://127.0.0.1:5000
+
+# 同时验证前端 Vite /api 代理（需要前后端都已启动）
+python ops/chat_sse_smoke.py --backend-url http://127.0.0.1:5000 --frontend-url http://127.0.0.1:5173
+
+# Windows 一键本地 SSE 联调（自动启动缺失的后端/前端）
+powershell -ExecutionPolicy Bypass -File ops/chat_sse_local_smoke.ps1
+
+# 联调后保留脚本启动的服务
+powershell -ExecutionPolicy Bypass -File ops/chat_sse_local_smoke.ps1 -KeepRunning
+
+# Windows 本地服务诊断（只检查，不启动服务）
+powershell -ExecutionPolicy Bypass -File ops/chat_sse_local_doctor.ps1
+
+# 部署前预检：检查密钥、CORS、healthz、readyz、metrics、Redis、Milvus、MCP 配置
+python ops/cloud_agent_doctor.py --base-url http://127.0.0.1:5000
+python ops/cloud_agent_doctor.py --env-file ops/cloud_agent.env --base-url http://127.0.0.1:5000
+python ops/cloud_agent_doctor.py --base-url http://127.0.0.1:5000 --json
+
+# 换 API / 外部依赖后，只做只读连通 smoke，不写业务数据
+python ops/external_dependency_readonly_smoke.py --env-file ops/cloud_agent.env
+
+# 验证 MCP registry 与 Billing 只读工具调用，不输出订单/实例明细
+python ops/mcp_billing_readonly_smoke.py --env-file ops/cloud_agent.env --json
+# artifact: .codex-run/mcp-billing-smoke.json
+
+# 验证 Redis 短记忆 -> Milvus 长记忆 -> 向量检索链路，只写入合成 smoke 数据
+python ops/memory_e2e_smoke.py --env-file ops/cloud_agent.env
+
+# Browser smoke: Vite + mock SSE server
+cd cloud_agent/front/cloud_agent
+npm run smoke:browser
+
+# Browser smoke: Vite + real FastAPI app + smoke-only fake graph
+npm run smoke:browser:real-backend
 ```
 
-**测试覆盖（20 文件 156 项）：**
+更多本地开发、端口排障、降级说明和常见 warning 解释见 `ops/local_dev_runbook.md`。
+发布前门禁顺序和证据清单见 `ops/release_checklist.md`；一键聚合脚本见 `ops/release_gate.py`；证据索引脚本见 `ops/release_evidence.py`，默认写入 `.codex-run/release-evidence.json` 和 `.codex-run/release-evidence.md`。
+
+**最近一次 canonical regression：Python 308 项通过，前端组件测试 13 项通过，Vue type-check 与 Vite production build 通过。**
 
 | 测试文件 | 覆盖内容 |
 |---|---|

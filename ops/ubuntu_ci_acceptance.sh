@@ -34,7 +34,8 @@ export HF_HUB_DISABLE_SYMLINKS_WARNING="${HF_HUB_DISABLE_SYMLINKS_WARNING:-1}"
 export CLOUD_AGENT_LLM_PRICING_CONFIG="${CLOUD_AGENT_LLM_PRICING_CONFIG:-${REPO_ROOT}/ops/prometheus/llm_pricing.example.yml}"
 
 if [[ -z "${DEEPSEEK_API_KEY:-}" && -z "${DEEPSEEK_API_KEY_FILE:-}" ]]; then
-  export DEEPSEEK_API_KEY="ci-placeholder"
+  echo "DEEPSEEK_API_KEY or DEEPSEEK_API_KEY_FILE must be set by the deployment environment." >&2
+  exit 2
 fi
 
 mkdir -p "${ARTIFACT_DIR}"
@@ -138,13 +139,15 @@ PY
 
 query_prometheus_summary() {
   local promql="$1"
-  python3 - "$PROMETHEUS_URL" "$promql" <<'PY'
+  local min_results="${2:-0}"
+  python3 - "$PROMETHEUS_URL" "$promql" "$min_results" <<'PY'
 import json
 import sys
 import urllib.parse
 import urllib.request
 
 base_url, promql = sys.argv[1], sys.argv[2]
+min_results = int(sys.argv[3])
 url = f"{base_url.rstrip('/')}/api/v1/query?{urllib.parse.urlencode({'query': promql})}"
 request = urllib.request.Request(url, headers={"User-Agent": "cloud-agent-acceptance"})
 
@@ -161,6 +164,9 @@ if payload.get("status") != "success":
 
 result = payload.get("data", {}).get("result", [])
 print(f"result_count={len(result)}")
+if len(result) < min_results:
+    print("prometheus_result_count_below_min=true", file=sys.stderr)
+    raise SystemExit(1)
 if result:
     value = result[0].get("value", [None, None])[1]
     print(f"first_value={value}")
@@ -278,7 +284,7 @@ else
 fi
 
 run_step "prometheus_ready" check_http_status "${PROMETHEUS_URL}/-/ready"
-run_step "prometheus_up_cloud_agent" query_prometheus_summary 'up{job="cloud_agent"}'
+run_step "prometheus_up_cloud_agent" query_prometheus_summary 'up{job="cloud_agent"}' 1
 run_step "prometheus_request_metric" query_prometheus_summary 'cloud_agent_request_total'
 run_step "prometheus_llm_metric" query_prometheus_summary 'cloud_agent_llm_call_total or cloud_agent_llm_estimated_cost_usd_total'
 run_step "prometheus_tool_metric" query_prometheus_summary 'cloud_agent_tool_call_total or cloud_agent_mcp_registry_initialize_total'

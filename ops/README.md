@@ -73,6 +73,17 @@ ops/native_observability_ubuntu.md
 
 当前 Ubuntu VM 原生路径已经完成一次真实验收：Grafana health 正常、Prometheus ready、`cloud_agent` target 为 `up`、`cloud_agent.rules` 已加载、dashboard JSON 已加载、`/api/metrics` 有真实 `cloud_agent_*` 样本。
 
+Windows or other environments without Bash can use the cross-platform runtime
+acceptance after FastAPI, Prometheus, and Grafana are running:
+
+```powershell
+python observability_acceptance.py --run-chat-smoke --grafana-user admin --grafana-password admin --json
+```
+
+It writes the same `.acceptance/<timestamp>/summary.tsv` contract as the Ubuntu
+script, records only low-cardinality status/counts, and can be required by
+`python release_evidence.py --require-observability --json`.
+
 如果已经在 Ubuntu VM 或 CI runner 上启动了 FastAPI、Prometheus 和 Grafana，可以用验收脚本一次性收集关键结果：
 
 ```bash
@@ -86,6 +97,11 @@ bash ops/ubuntu_ci_acceptance.sh
 ```bash
 RUN_CHAT_SMOKE=1 bash ops/ubuntu_ci_acceptance.sh
 ```
+
+The acceptance script requires at least one Prometheus result for
+`up{job="cloud_agent"}`. Business metric queries record their sample count so
+early environments can distinguish "Prometheus is reachable" from "traffic has
+not produced this metric yet".
 
 脚本不会归档 chat 响应正文或完整 metrics body；Grafana dashboard API 验证需要设置 `GRAFANA_USER` / `GRAFANA_PASSWORD`，否则该项会标记为 `BLOCKED`。
 

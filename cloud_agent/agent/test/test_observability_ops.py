@@ -225,6 +225,84 @@ def test_grafana_provisioning_points_to_dashboard_directory_and_prometheus_datas
     assert datasource_config["url"] == "http://prometheus:9090"
 
 
+def test_ubuntu_acceptance_script_records_safe_artifacts_and_observability_checks():
+    script = (OPS_DIR / "ubuntu_ci_acceptance.sh").read_text(encoding="utf-8")
+
+    required_snippets = [
+        'ARTIFACT_DIR="${ACCEPTANCE_ARTIFACT_DIR:-${REPO_ROOT}/.acceptance/${STAMP}}"',
+        'SUMMARY_FILE="${ARTIFACT_DIR}/summary.tsv"',
+        'printf "step\\tstatus\\tdetail\\n" > "${SUMMARY_FILE}"',
+        'run_step "canonical_regression" bash test_all.sh',
+        "promtool check rules ops/prometheus/cloud_agent_alerts.yml",
+        'run_step "healthz" check_http_status "${BASE_URL}/healthz"',
+        'run_step "readyz" check_http_status "${BASE_URL}/readyz"',
+        'run_step "metrics_summary" check_metrics_summary',
+        'run_step "chat_smoke" run_chat_smoke',
+        'block_step "chat_smoke" "set RUN_CHAT_SMOKE=1 to execute synthetic chat traffic"',
+        'run_step "prometheus_ready" check_http_status "${PROMETHEUS_URL}/-/ready"',
+        'run_step "prometheus_request_metric" query_prometheus_summary',
+        'run_step "grafana_health" check_http_status "${GRAFANA_URL}/api/health"',
+        'block_step "grafana_dashboard"',
+        "CHAT_SMOKE_AUTH_USER",
+        "CHAT_SMOKE_AUTH_TENANT",
+    ]
+    for snippet in required_snippets:
+        assert snippet in script
+
+    assert "The script does not archive chat response bodies or /api/metrics bodies." in script
+    assert "for _ in response:" in script
+    assert "text = response.read().decode" in script
+    assert "summary.tsv" in script
+
+
+def test_ubuntu_acceptance_prometheus_required_queries_fail_on_empty_result():
+    script = (OPS_DIR / "ubuntu_ci_acceptance.sh").read_text(encoding="utf-8")
+
+    assert 'local min_results="${2:-0}"' in script
+    assert "min_results = int(sys.argv[3])" in script
+    assert "if len(result) < min_results:" in script
+    assert "prometheus_result_count_below_min=true" in script
+    assert 'query_prometheus_summary \'up{job="cloud_agent"}\' 1' in script
+    assert 'query_prometheus_summary \'cloud_agent_request_total\'' in script
+
+
+def test_cross_platform_acceptance_preserves_safe_tsv_contract():
+    script = (OPS_DIR / "observability_acceptance.py").read_text(encoding="utf-8")
+
+    for snippet in (
+        '"step\\tstatus\\tdetail"',
+        "FORBIDDEN_METRICS_TERMS",
+        '"prometheus_up_cloud_agent"',
+        'minimum=1',
+        '"grafana_dashboard"',
+        '"--run-chat-smoke"',
+        '"--chat-smoke-text"',
+        '"--require-llm-metric"',
+        '"--require-tool-metric"',
+        '"--post-chat-wait-seconds"',
+        '"--artifact-dir"',
+    ):
+        assert snippet in script
+    assert "It never writes chat bodies, metrics bodies, credentials" in script
+
+
+def test_react_agents_use_per_llm_run_metrics_callbacks():
+    agents = {
+        "billing_agent": "billing_agent.py",
+        "product_agent": "product_agent.py",
+        "promotion_agent": "promotion_agent.py",
+        "recommendation_agent": "recommendation_agent.py",
+        "finops_agent": "finops_agent.py",
+    }
+
+    for component, filename in agents.items():
+        agent = (PROJECT_ROOT / "cloud_agent" / "agent" / "agents" / filename).read_text(encoding="utf-8")
+        assert "LLMCallMetricsCallback" in agent
+        assert f'component="{component}"' in agent
+        assert 'operation="react_agent"' in agent
+        assert '"callbacks": [' in agent
+
+
 def test_otel_console_trace_smoke_script_keeps_request_span_contract():
     script = (OPS_DIR / "otel" / "console_trace_smoke.py").read_text(encoding="utf-8")
 

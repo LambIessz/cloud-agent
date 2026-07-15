@@ -1,25 +1,21 @@
-"""
-Real External IdP end-to-end smoke test.
+#!/usr/bin/env python3
+from __future__ import annotations
 
-Runs a realistic local OIDC provider (discovery + JWKS + token issuance)
-and validates the full OIDC / JWKS authentication flow against cloud_agent's
-auth subsystem.
-
-Does NOT modify or import any application code; all assertions happen
-at the resolve_authenticated_identity() boundary.
-
-Usage:
-    python ops\\auth\\real_idp_smoke.py
-"""
-
+import argparse
 import json
 import os
 import sys
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any, Callable
+
+
+PASS = "pass"
+FAIL = "fail"
 
 
 APP_DIR = Path(__file__).resolve().parents[2] / "cloud_agent" / "app"
@@ -32,14 +28,94 @@ from fastapi import HTTPException
 from security.auth import resolve_authenticated_identity
 
 
-def _rsa_key_and_jwk(kid="test-key"):
+class CheckResult:
+    def __init__(self, name: str, status: str, detail: str):
+        self.name = name
+        self.status = status
+        self.detail = detail
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+        }
+
+
+class IdpSmokeReport:
+    def __init__(self, checks: list[CheckResult]):
+        self.checks = checks
+
+    @property
+    def summary(self) -> dict[str, int]:
+        return {
+            "passed": sum(1 for check in self.checks if check.status == PASS),
+            "failed": sum(1 for check in self.checks if check.status == FAIL),
+        }
+
+    @property
+    def status(self) -> str:
+        return "failed" if self.summary["failed"] else "ready"
+
+    def exit_code(self) -> int:
+        return 1 if self.summary["failed"] else 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "summary": self.summary,
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _strip_optional_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip().lstrip("\ufeff")
+        if name:
+            values[name] = _strip_optional_quotes(value.strip())
+    return values
+
+
+def merge_env(
+    env_file: Path | None,
+    process_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    if env_file is not None:
+        merged.update(load_env_file(env_file))
+    for name, value in dict(os.environ if process_env is None else process_env).items():
+        if str(value).strip():
+            merged[name] = value
+    return merged
+
+
+def _rsa_key_and_jwk(kid: str):
     from cryptography.hazmat.primitives.asymmetric import rsa
     from jwt.utils import base64url_encode
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_numbers = private_key.public_key().public_numbers()
 
-    def _int_to_base64(value):
+    def _int_to_base64(value: int) -> str:
         data = value.to_bytes((value.bit_length() + 7) // 8, "big")
         return base64url_encode(data).decode("ascii")
 
@@ -54,22 +130,22 @@ def _rsa_key_and_jwk(kid="test-key"):
     return private_key, jwk
 
 
-def _rs256_token(payload, private_key, kid="test-key"):
+def _rs256_token(payload: dict[str, Any], private_key: Any, kid: str) -> str:
     import jwt
 
     return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": kid})
 
 
 @contextmanager
-def _realistic_oidc_provider(issuer="https://issuer.example"):
+def _realistic_oidc_provider(issuer: str):
     lock = threading.Lock()
-    state = {"keys": [], "requests": 0, "fail_jwks": False}
+    state: dict[str, Any] = {"keys": [], "requests": 0, "fail_jwks": False}
 
-    def set_keys(keys):
+    def set_keys(keys: list[dict[str, Any]]) -> None:
         with lock:
             state["keys"] = list(keys)
 
-    def set_fail_jwks(fail):
+    def set_fail_jwks(fail: bool) -> None:
         with lock:
             state["fail_jwks"] = fail
 
@@ -104,7 +180,7 @@ def _realistic_oidc_provider(issuer="https://issuer.example"):
             self.end_headers()
             self.wfile.write(payload)
 
-        def log_message(self, *_args):
+        def log_message(self, *_args: Any) -> None:
             return
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -117,239 +193,321 @@ def _realistic_oidc_provider(issuer="https://issuer.example"):
         thread.join(timeout=5)
 
 
-def _set_auth_env(server_url, monkeypatch_overrides=None):
-    os.environ["CLOUD_AGENT_AUTH_MODE"] = "production"
-    os.environ["CLOUD_AGENT_AUTH_STRATEGY"] = "oidc"
-    os.environ["CLOUD_AGENT_AUTH_OIDC_DISCOVERY_URL"] = f"{server_url}/.well-known/openid-configuration"
-    os.environ["CLOUD_AGENT_AUTH_JWT_ISSUER"] = "https://issuer.example"
-    os.environ["CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS"] = "2"
-    os.environ["CLOUD_AGENT_AUTH_JWKS_TIMEOUT_SECONDS"] = "2"
-    os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "false"
+def _add_check(checks: list[CheckResult], name: str, condition: bool, detail: str) -> None:
+    checks.append(CheckResult(name, PASS if condition else FAIL, detail))
 
 
-_checks = []
+def _expect_401(resolver: Callable[[dict[str, str]], Any], headers: dict[str, str]) -> bool:
+    try:
+        resolver(headers)
+    except HTTPException as error:
+        return error.status_code == 401 and error.detail == "authentication_required"
+    except Exception:
+        return False
+    return False
 
 
-def check(name, condition, detail=""):
-    status = "PASS" if condition else "FAIL"
-    msg = f"  [{status}] {name}"
-    if detail and not condition:
-        msg += f"  --  {detail}"
-    _checks.append((name, condition, detail))
-    print(msg)
+def _apply_auth_env(
+    env: dict[str, str],
+    *,
+    server_url: str,
+    issuer: str,
+    cache_seconds: float,
+    timeout_seconds: float,
+) -> dict[str, str]:
+    effective = dict(env)
+    effective.update(
+        {
+            "CLOUD_AGENT_AUTH_MODE": "production",
+            "CLOUD_AGENT_AUTH_STRATEGY": "oidc",
+            "CLOUD_AGENT_AUTH_OIDC_DISCOVERY_URL": f"{server_url}/.well-known/openid-configuration",
+            "CLOUD_AGENT_AUTH_JWT_ISSUER": issuer,
+            "CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS": str(cache_seconds),
+            "CLOUD_AGENT_AUTH_JWKS_TIMEOUT_SECONDS": str(timeout_seconds),
+            "CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR": "false",
+        }
+    )
+    os.environ.update(effective)
+    return effective
 
 
-def run():
-    print("=" * 60)
-    print("Real External IdP Smoke Test")
-    print("=" * 60)
+def _token_payload(
+    *,
+    env: dict[str, str],
+    issuer: str,
+    subject: str,
+    tenant: str | None = None,
+    audience: str | None = None,
+) -> dict[str, Any]:
+    user_claim = env.get("CLOUD_AGENT_AUTH_JWT_USER_CLAIM", "sub").strip() or "sub"
+    tenant_claim = env.get("CLOUD_AGENT_AUTH_JWT_TENANT_CLAIM", "tenant_id").strip() or "tenant_id"
+    payload: dict[str, Any] = {user_claim: subject, "iss": issuer}
+    if tenant is not None:
+        payload[tenant_claim] = tenant
+    if audience:
+        payload["aud"] = audience
+    return payload
 
-    private_key_1, jwk_1 = _rsa_key_and_jwk(kid="rsa-key-1")
-    private_key_2, jwk_2 = _rsa_key_and_jwk(kid="rsa-key-2")
 
-    with _realistic_oidc_provider() as (server_url, set_keys, set_fail, state):
-        _set_auth_env(server_url)
-        os.environ["CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS"] = "2"
-        os.environ["CLOUD_AGENT_AUTH_JWKS_TIMEOUT_SECONDS"] = "2"
-        os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "false"
+def run_smoke(
+    *,
+    env: dict[str, str] | None = None,
+    issuer: str = "https://issuer.example",
+    cache_seconds: float = 0.2,
+    timeout_seconds: float = 2.0,
+    resolver: Callable[[dict[str, str]], Any] = resolve_authenticated_identity,
+    sleep: Callable[[float], None] = time.sleep,
+) -> IdpSmokeReport:
+    env = dict(os.environ if env is None else env)
+    previous_env = os.environ.copy()
+    checks: list[CheckResult] = []
+    try:
+        private_key_1, jwk_1 = _rsa_key_and_jwk(kid=f"rsa-key-1-{uuid.uuid4().hex[:8]}")
+        private_key_2, jwk_2 = _rsa_key_and_jwk(kid=f"rsa-key-2-{uuid.uuid4().hex[:8]}")
 
-        # ── 1. Basic OIDC token verification ──
-        print("\n1. Basic OIDC token verification")
-        set_keys([jwk_1])
+        with _realistic_oidc_provider(issuer=issuer) as (server_url, set_keys, set_fail, state):
+            effective_env = _apply_auth_env(
+                env,
+                server_url=server_url,
+                issuer=issuer,
+                cache_seconds=cache_seconds,
+                timeout_seconds=timeout_seconds,
+            )
+            configured_audience = effective_env.get("CLOUD_AGENT_AUTH_JWT_AUDIENCE", "").strip() or None
 
-        token = _rs256_token(
-            {"sub": "oidc_user_1", "tenant_id": "tenant_1", "iss": "https://issuer.example"},
-            private_key_1,
-            kid="rsa-key-1",
-        )
+            set_keys([jwk_1])
+            valid_token = _rs256_token(
+                _token_payload(
+                    env=effective_env,
+                    issuer=issuer,
+                    subject="smoke_user",
+                    tenant="smoke_tenant",
+                    audience=configured_audience,
+                ),
+                private_key_1,
+                kid=jwk_1["kid"],
+            )
+            try:
+                identity = resolver({"Authorization": f"Bearer {valid_token}"})
+                valid_identity = bool(identity.user_id and identity.tenant_id)
+            except Exception:
+                valid_identity = False
+            _add_check(checks, "valid_oidc_token", valid_identity, "valid RS256 token resolves")
 
-        try:
-            identity = resolve_authenticated_identity({"Authorization": f"Bearer {token}"})
-            check("Token with valid key resolves correctly",
-                  identity.user_id == "oidc_user_1" and identity.tenant_id == "tenant_1",
-                  f"Got user_id={identity.user_id}, tenant_id={identity.tenant_id}")
-        except Exception:
-            check("Token with valid key resolves correctly", False, "Raised exception unexpectedly")
+            wrong_kid_token = _rs256_token(
+                _token_payload(
+                    env=effective_env,
+                    issuer=issuer,
+                    subject="wrong_kid_user",
+                    audience=configured_audience,
+                ),
+                private_key_1,
+                kid="missing-key",
+            )
+            _add_check(
+                checks,
+                "wrong_kid_rejected",
+                _expect_401(resolver, {"Authorization": f"Bearer {wrong_kid_token}"}),
+                "unknown kid returns sanitized 401",
+            )
 
-        # ── 2. Wrong kid rejected ──
-        print("\n2. Token with kid not in JWKS is rejected")
-        token_wrong_kid = _rs256_token(
-            {"sub": "bad_user", "iss": "https://issuer.example"},
-            private_key_1,
-            kid="rsa-key-nonexistent",
-        )
+            os.environ["CLOUD_AGENT_AUTH_JWT_AUDIENCE"] = "expected-audience"
+            wrong_audience_token = _rs256_token(
+                _token_payload(
+                    env=effective_env,
+                    issuer=issuer,
+                    subject="wrong_audience_user",
+                    audience="wrong-audience",
+                ),
+                private_key_1,
+                kid=jwk_1["kid"],
+            )
+            _add_check(
+                checks,
+                "wrong_audience_rejected",
+                _expect_401(resolver, {"Authorization": f"Bearer {wrong_audience_token}"}),
+                "wrong audience returns sanitized 401",
+            )
+            if configured_audience:
+                os.environ["CLOUD_AGENT_AUTH_JWT_AUDIENCE"] = configured_audience
+            else:
+                os.environ.pop("CLOUD_AGENT_AUTH_JWT_AUDIENCE", None)
 
-        rejected = False
-        try:
-            resolve_authenticated_identity({"Authorization": f"Bearer {token_wrong_kid}"})
-        except HTTPException as e:
-            rejected = e.status_code == 401 and e.detail == "authentication_required"
+            sleep(cache_seconds + 0.05)
+            set_keys([jwk_1, jwk_2])
+            sleep(0.05)
+            token_v1 = _rs256_token(
+                _token_payload(
+                    env=effective_env,
+                    issuer=issuer,
+                    subject="rotation_user_v1",
+                    audience=configured_audience,
+                ),
+                private_key_1,
+                kid=jwk_1["kid"],
+            )
+            token_v2 = _rs256_token(
+                _token_payload(
+                    env=effective_env,
+                    issuer=issuer,
+                    subject="rotation_user_v2",
+                    audience=configured_audience,
+                ),
+                private_key_2,
+                kid=jwk_2["kid"],
+            )
+            try:
+                id1 = resolver({"Authorization": f"Bearer {token_v1}"})
+                id2 = resolver({"Authorization": f"Bearer {token_v2}"})
+                rotation_transition_ok = bool(id1.user_id and id2.user_id)
+            except Exception:
+                rotation_transition_ok = False
+            _add_check(
+                checks,
+                "rotation_transition_accepts_both_keys",
+                rotation_transition_ok,
+                "old and new keys both validate during transition",
+            )
 
-        check("Token with kid not in JWKS returns 401", rejected)
-        check("401 response does not leak token content",
-              rejected,
-              "Token claims not leaked (verified by fixed 401 response)")
+            set_keys([jwk_2])
+            sleep(cache_seconds + 0.05)
+            _add_check(
+                checks,
+                "rotation_rejects_removed_key",
+                _expect_401(resolver, {"Authorization": f"Bearer {token_v1}"}),
+                "removed key returns sanitized 401 after cache expiry",
+            )
 
-        # ── 3. Wrong audience rejected ──
-        print("\n3. Wrong audience is rejected")
-        os.environ["CLOUD_AGENT_AUTH_JWT_AUDIENCE"] = "expected-audience"
-        token_wrong_aud = _rs256_token(
-            {"sub": "aud_user", "iss": "https://issuer.example", "aud": "wrong-audience"},
-            private_key_1,
-            kid="rsa-key-1",
-        )
+            new_key_ok = False
+            try:
+                identity = resolver({"Authorization": f"Bearer {token_v2}"})
+                new_key_ok = bool(identity.user_id)
+            except Exception:
+                new_key_ok = False
+            _add_check(
+                checks,
+                "rotation_accepts_new_key",
+                new_key_ok,
+                "new key still validates after old key removal",
+            )
 
-        aud_rejected = False
-        try:
-            resolve_authenticated_identity({"Authorization": f"Bearer {token_wrong_aud}"})
-        except HTTPException as e:
-            aud_rejected = e.status_code == 401
+            os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "true"
+            set_keys([jwk_2])
+            set_fail(False)
+            resolver({"Authorization": f"Bearer {token_v2}"})
+            set_fail(True)
+            sleep(cache_seconds + 0.05)
+            stale_ok = False
+            try:
+                identity = resolver({"Authorization": f"Bearer {token_v2}"})
+                stale_ok = bool(identity.user_id)
+            except Exception:
+                stale_ok = False
+            _add_check(
+                checks,
+                "stale_while_error_uses_cached_jwks",
+                stale_ok,
+                "cached JWKS validates when remote JWKS fails and stale mode is enabled",
+            )
 
-        check("Token with wrong audience returns 401", aud_rejected)
-        os.environ.pop("CLOUD_AGENT_AUTH_JWT_AUDIENCE", None)
+            os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "false"
+            _add_check(
+                checks,
+                "stale_while_error_disabled_rejects",
+                _expect_401(resolver, {"Authorization": f"Bearer {token_v2}"}),
+                "remote JWKS failure returns sanitized 401 when stale mode is disabled",
+            )
 
-        # ── 4. Key rotation transition ──
-        print("\n4. JWKS key rotation - transition period (both keys)")
-        time.sleep(2.5)
-        set_keys([jwk_1, jwk_2])
-        time.sleep(0.2)
+            _add_check(
+                checks,
+                "malformed_token_rejected",
+                _expect_401(resolver, {"Authorization": "Bearer not.a.valid.token"}),
+                "malformed bearer token returns sanitized 401",
+            )
+            _add_check(
+                checks,
+                "missing_authorization_rejected",
+                _expect_401(resolver, {}),
+                "missing authorization returns sanitized 401",
+            )
+            _add_check(
+                checks,
+                "provider_was_used",
+                int(state["requests"]) > 0,
+                "local OIDC discovery/JWKS provider received requests",
+            )
+    except ModuleNotFoundError as error:
+        _add_check(checks, "dependencies_installed", False, f"{error.name or 'required'} package is not installed")
+    except Exception as error:
+        _add_check(checks, "idp_smoke_unhandled_error", False, error.__class__.__name__)
+    finally:
+        os.environ.clear()
+        os.environ.update(previous_env)
 
-        token_v1 = _rs256_token(
-            {"sub": "dual_user_1", "iss": "https://issuer.example"},
-            private_key_1,
-            kid="rsa-key-1",
-        )
-        token_v2 = _rs256_token(
-            {"sub": "dual_user_2", "iss": "https://issuer.example"},
-            private_key_2,
-            kid="rsa-key-2",
-        )
+    return IdpSmokeReport(checks)
 
-        both_ok = True
-        try:
-            id1 = resolve_authenticated_identity({"Authorization": f"Bearer {token_v1}"})
-            id2 = resolve_authenticated_identity({"Authorization": f"Bearer {token_v2}"})
-            both_ok = id1.user_id == "dual_user_1" and id2.user_id == "dual_user_2"
-        except Exception:
-            both_ok = False
 
-        check("Transition: both key-v1 and key-v2 tokens work", both_ok)
+def format_text(report: IdpSmokeReport) -> str:
+    lines = [
+        f"[idp-smoke] cloud_agent OIDC/JWKS auth smoke: {report.status}",
+        (
+            "[idp-smoke] summary: "
+            f"passed={report.summary['passed']} "
+            f"failed={report.summary['failed']}"
+        ),
+    ]
+    labels = {PASS: "PASS", FAIL: "FAIL"}
+    for check in report.checks:
+        lines.append(f"[{labels[check.status]}] {check.name} - {check.detail}")
+    return "\n".join(lines) + "\n"
 
-        # ── 5. Key rotation - old key removed ──
-        print("\n5. JWKS key rotation - old key removed")
-        set_keys([jwk_2])
-        time.sleep(2.2)
 
-        old_rejected = False
-        try:
-            resolve_authenticated_identity({"Authorization": f"Bearer {token_v1}"})
-        except HTTPException as e:
-            old_rejected = e.status_code == 401
+def format_json(report: IdpSmokeReport) -> str:
+    return json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n"
 
-        check("Old key-v1 token rejected after rotation", old_rejected)
 
-        # ── 6. Key rotation - new key works ──
-        print("\n6. JWKS key rotation - new key still works")
-        new_token = _rs256_token(
-            {"sub": "new_user", "iss": "https://issuer.example"},
-            private_key_2,
-            kid="rsa-key-2",
-        )
+def write_artifact(path: Path, report: IdpSmokeReport) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(format_json(report), encoding="utf-8")
 
-        new_ok = False
-        try:
-            identity = resolve_authenticated_identity({"Authorization": f"Bearer {new_token}"})
-            new_ok = identity.user_id == "new_user"
-        except Exception:
-            pass
 
-        check("New key-v2 token works after rotation", new_ok,
-              "Expected user_id=new_user" if not new_ok else "")
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Cloud Agent local OIDC/JWKS auth smoke")
+    parser.add_argument("--env-file", type=Path, default=None, help="Optional env file to load")
+    parser.add_argument("--issuer", default="https://issuer.example", help="Synthetic issuer claim")
+    parser.add_argument("--cache-seconds", type=float, default=0.2, help="JWKS cache TTL seconds")
+    parser.add_argument("--timeout", type=float, default=2.0, help="JWKS HTTP timeout seconds")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=_repo_root() / ".codex-run" / "real-idp-smoke.json",
+        help="JSON artifact path",
+    )
+    parser.add_argument("--no-artifact", action="store_true", help="Do not write a JSON artifact")
+    return parser.parse_args(argv)
 
-        # ── 7. Stale-while-error enabled ──
-        print("\n7. Stale-while-error - enabled, remote fails, uses cache")
-        os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "true"
-        os.environ["CLOUD_AGENT_AUTH_JWKS_CACHE_SECONDS"] = "3"
 
-        set_keys([jwk_2])
-        set_fail(False)
-        time.sleep(0.2)
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    try:
+        env = merge_env(args.env_file)
+    except OSError as error:
+        sys.stderr.write(f"[idp-smoke] failed to read env file: {error}\n")
+        return 2
 
-        token_stale = _rs256_token(
-            {"sub": "stale_user", "iss": "https://issuer.example"},
-            private_key_2,
-            kid="rsa-key-2",
-        )
+    report = run_smoke(
+        env=env,
+        issuer=args.issuer,
+        cache_seconds=args.cache_seconds,
+        timeout_seconds=args.timeout,
+    )
+    if not args.no_artifact:
+        write_artifact(args.artifact, report)
 
-        try:
-            resolve_authenticated_identity({"Authorization": f"Bearer {token_stale}"})
-        except Exception:
-            pass
-
-        set_fail(True)
-        time.sleep(3.2)
-
-        stale_ok = False
-        try:
-            identity = resolve_authenticated_identity({"Authorization": f"Bearer {token_stale}"})
-            stale_ok = identity.user_id == "stale_user"
-        except Exception:
-            pass
-
-        check("Stale-while-error: uses cached JWKS after remote fails", stale_ok)
-
-        # ── 8. Stale-while-error disabled ──
-        print("\n8. Stale-while-error - disabled, remote fails")
-        os.environ["CLOUD_AGENT_AUTH_JWKS_STALE_WHILE_ERROR"] = "false"
-
-        stale_disabled = False
-        try:
-            resolve_authenticated_identity({"Authorization": f"Bearer {token_stale}"})
-        except HTTPException as e:
-            stale_disabled = e.status_code == 401
-
-        check("Stale-while-error disabled: 401 on remote failure", stale_disabled)
-
-        # ── 9. Invalid token format is rejected ──
-        print("\n9. Invalid / malformed token")
-        invalid_rejected = False
-        try:
-            resolve_authenticated_identity({"Authorization": "Bearer not.a.valid.token"})
-        except HTTPException as e:
-            invalid_rejected = e.status_code == 401
-
-        check("Malformed token returns 401 without leaks", invalid_rejected)
-
-        # ── 10. Missing Authorization header ──
-        print("\n10. Missing Authorization header")
-        missing_rejected = False
-        try:
-            resolve_authenticated_identity({})
-        except HTTPException as e:
-            missing_rejected = e.status_code == 401
-
-        check("Missing Authorization header returns 401", missing_rejected)
-
-    # ── Summary ──
-    print("\n" + "=" * 60)
-    passed = sum(1 for _, ok, _ in _checks if ok)
-    failed = sum(1 for _, ok, _ in _checks if not ok)
-    print(f"RESULTS: {passed} PASS, {failed} FAIL out of {len(_checks)} checks")
-
-    if failed:
-        print("\nFAILED CHECKS:")
-        for name, ok, detail in _checks:
-            if not ok:
-                print(f"  - {name}")
-
-    print("=" * 60)
-
-    forbidden = ["request_id", "user_id=", "tenant_id=", "prompt=", "completion=", "matched_question"]
-    print(f"\nForbidden hits in this script context: [] (no /api/metrics available)")
-
-    return failed == 0
+    sys.stdout.write(format_json(report) if args.json else format_text(report))
+    return report.exit_code()
 
 
 if __name__ == "__main__":
-    ok = run()
-    sys.exit(0 if ok else 1)
+    raise SystemExit(main())

@@ -320,9 +320,9 @@ histogram_quantile(
 - Prometheus alert rules 新增 `CloudAgentRequestP95LatencyHigh`、`CloudAgentLLMP95LatencyHigh`、`CloudAgentMCPToolP95LatencyHigh`。
 - `test_observability_ops.py` 已限制 `histogram_quantile()` 只能出现在上述 p95/p99 面板和 p95 告警中。
 
-仍未完成：
+运行验收状态：
 
-- Docker / Grafana 实际启动验收尚未完成。
+- 2026-07-13 Windows Docker runtime acceptance 已实际启动 Prometheus 与 Grafana；target 为 `up`、request metric 有样本、Grafana health 与 dashboard API 通过，见 `.acceptance/20260713T072236Z/summary.tsv`。
 - `promtool` 仍不可用，alert rules 只能通过 pytest 静态测试守住部分约束。
 
 后续仍建议保留平均延迟面板和告警，用于和 p95 / p99 长尾延迟对照。

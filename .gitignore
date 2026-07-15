@@ -6,6 +6,9 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp/
 .acceptance/
+.codex-run/
+.security-audit/
+.cloud-agent-doctor/
 
 # Local secrets and environment files.
 .env
@@ -13,6 +16,12 @@ __pycache__/
 cloud_agent/agent/.env
 cloud_agent/app/.env
 ops/cloud_agent.env
+*.pem
+*.key
+*.cert
+*.tgz
+*.tar.gz
+*.zip
 
 # Keep documented examples tracked.
 !.env.example
@@ -20,13 +29,20 @@ ops/cloud_agent.env
 !ops/*.env.example
 
 # Local runtime data.
+*.db
 cloud_agent/agent/milvus_lite_cache.db/
 cloud_agent/agent/milvus_lite_cloud.db/
 cloud_agent/agent/milvus_lite_memory.db/
 cloud_agent/agent/*.db/
+deep_research/app/data/
 
 # Frontend dependencies.
 cloud_agent/front/**/node_modules/
+cloud_agent/front/**/.npm-cache/
+cloud_agent/front/**/test-results/
+cloud_agent/front/**/playwright-report/
+cloud_agent/front/**/test-results-real-backend/
+cloud_agent/front/**/playwright-report-real-backend/
 deep_research/front/**/node_modules/
 
 *.log

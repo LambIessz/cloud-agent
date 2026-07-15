@@ -10,18 +10,24 @@ ENV PYTHONIOENCODING=utf-8 \
 
 WORKDIR /app
 
-RUN python -m pip install --no-cache-dir --upgrade pip
+RUN python -m pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY cloud_agent/requirements-container.txt /app/cloud_agent/requirements-container.txt
 COPY cloud_agent/agent/requirements.txt /app/cloud_agent/agent/requirements.txt
-RUN python -m pip install --no-cache-dir -r /app/cloud_agent/requirements-container.txt
+RUN python -m pip install --no-cache-dir -r /app/cloud_agent/requirements-container.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY cloud_agent/app /app/cloud_agent/app
 COPY cloud_agent/agent /app/cloud_agent/agent
 COPY cloud_agent/mock_data /app/cloud_agent/mock_data
 COPY ops/prometheus/llm_pricing.example.yml /app/ops/prometheus/llm_pricing.example.yml
 
+RUN addgroup --system cloudagent \
+    && adduser --system --ingroup cloudagent --home /app --no-create-home cloudagent \
+    && chown -R cloudagent:cloudagent /app
+
 WORKDIR /app/cloud_agent/app
+
+USER cloudagent
 
 EXPOSE 5000
 

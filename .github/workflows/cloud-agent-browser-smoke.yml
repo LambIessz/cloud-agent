@@ -1,0 +1,308 @@
+name: cloud-agent-browser-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 20 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-agent-browser-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    name: browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: cloud_agent/front/cloud_agent
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm run smoke:browser
+
+      - name: Upload browser smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-artifacts
+          path: |
+            cloud_agent/front/cloud_agent/playwright-report/
+            cloud_agent/front/cloud_agent/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  real-backend-browser-smoke:
+    name: real backend browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            cloud_agent/agent/requirements.txt
+            cloud_agent/requirements-container.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloud_agent/requirements-container.txt
+
+      - name: Install frontend dependencies
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: cloud_agent/front/cloud_agent
+        run: npx playwright install --with-deps chromium
+
+      - name: Run real backend browser smoke
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm run smoke:browser:real-backend
+
+      - name: Upload real backend browser smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-backend-browser-smoke-artifacts
+          path: |
+            cloud_agent/front/cloud_agent/playwright-report-real-backend/
+            cloud_agent/front/cloud_agent/test-results-real-backend/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deploy-doctor:
+    name: deployment doctor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      CLOUD_AGENT_LLM_PRICING_CONFIG: ${{ github.workspace }}/ops/prometheus/llm_pricing.example.yml
+      DEEPSEEK_API_KEY: ci-doctor-key
+      BASE_URL: http://127.0.0.1:9/v1
+      MODEL: deepseek-chat
+      CLOUD_AGENT_SMOKE_FAKE_GRAPH: "true"
+      CLOUD_AGENT_AUTH_MODE: local
+      CLOUD_AGENT_SEMANTIC_CACHE_ENABLED: "false"
+      CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED: "false"
+      CLOUD_AGENT_VECTOR_SEARCH_ENABLED: "false"
+      CLOUD_AGENT_KNOWLEDGE_GRAPH_ENABLED: "false"
+      CLOUD_AGENT_BACKGROUND_EXTRACT_ENABLED: "false"
+      CLOUD_AGENT_SEMANTIC_CACHE_WRITE_ENABLED: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            cloud_agent/agent/requirements.txt
+            cloud_agent/requirements-container.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloud_agent/requirements-container.txt
+
+      - name: Start fake backend
+        working-directory: cloud_agent/app
+        run: |
+          mkdir -p ../../.cloud-agent-doctor
+          python -X utf8 -m uvicorn app_main:app --host 127.0.0.1 --port 15300 > ../../.cloud-agent-doctor/backend.out.log 2> ../../.cloud-agent-doctor/backend.err.log &
+          echo $! > ../../.cloud-agent-doctor/backend.pid
+
+      - name: Wait for backend readiness
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error http://127.0.0.1:15300/readyz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat .cloud-agent-doctor/backend.err.log || true
+          exit 1
+
+      - name: Run deployment doctor
+        run: |
+          python ops/cloud_agent_doctor.py --base-url http://127.0.0.1:15300 --json | tee .cloud-agent-doctor/doctor.json
+
+      - name: Stop fake backend
+        if: ${{ always() }}
+        run: |
+          if [ -f .cloud-agent-doctor/backend.pid ]; then
+            kill "$(cat .cloud-agent-doctor/backend.pid)" || true
+          fi
+
+      - name: Upload deployment doctor artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-doctor-artifacts
+          path: |
+            .cloud-agent-doctor/doctor.json
+            .cloud-agent-doctor/backend.out.log
+            .cloud-agent-doctor/backend.err.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  observability-stack-smoke:
+    name: observability stack smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      CLOUD_AGENT_LLM_PRICING_CONFIG: ${{ github.workspace }}/ops/prometheus/llm_pricing.example.yml
+      DEEPSEEK_API_KEY: ci-observability-placeholder
+      BASE_URL: http://127.0.0.1:9/v1
+      MODEL: deepseek-chat
+      CLOUD_AGENT_SMOKE_FAKE_GRAPH: "true"
+      CLOUD_AGENT_AUTH_MODE: local
+      CLOUD_AGENT_SEMANTIC_CACHE_ENABLED: "false"
+      CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED: "false"
+      CLOUD_AGENT_VECTOR_SEARCH_ENABLED: "false"
+      CLOUD_AGENT_KNOWLEDGE_GRAPH_ENABLED: "false"
+      CLOUD_AGENT_BACKGROUND_EXTRACT_ENABLED: "false"
+      CLOUD_AGENT_SEMANTIC_CACHE_WRITE_ENABLED: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            cloud_agent/agent/requirements.txt
+            cloud_agent/requirements-container.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloud_agent/requirements-container.txt
+
+      - name: Install frontend dependencies
+        working-directory: cloud_agent/front/cloud_agent
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: cloud_agent/front/cloud_agent
+        run: npx playwright install --with-deps chromium
+
+      - name: Start fake backend
+        working-directory: cloud_agent/app
+        run: |
+          mkdir -p ../../.observability-ci
+          python -X utf8 -m uvicorn app_main:app --host 127.0.0.1 --port 5000 > ../../.observability-ci/backend.out.log 2> ../../.observability-ci/backend.err.log &
+          echo $! > ../../.observability-ci/backend.pid
+
+      - name: Wait for backend readiness
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/readyz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat .observability-ci/backend.err.log || true
+          exit 1
+
+      - name: Start Prometheus and Grafana
+        run: docker compose -f ops/docker-compose.observability.yml up -d
+
+      - name: Wait for observability services
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error http://127.0.0.1:9090/-/ready \
+              && curl --fail --silent --show-error http://127.0.0.1:3000/api/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose -f ops/docker-compose.observability.yml logs --no-color || true
+          exit 1
+
+      - name: Run observability acceptance
+        run: |
+          python ops/observability_acceptance.py --run-chat-smoke --grafana-user admin --grafana-password admin --artifact-dir .observability-ci/acceptance --json
+
+      - name: Run Grafana browser smoke
+        working-directory: cloud_agent/front/cloud_agent
+        env:
+          GRAFANA_USER: admin
+          GRAFANA_PASSWORD: admin
+        run: npm run smoke:grafana -- --output-dir ../../../.observability-ci/grafana-ui
+
+      - name: Stop observability services
+        if: ${{ always() }}
+        run: |
+          docker compose -f ops/docker-compose.observability.yml down -v || true
+          if [ -f .observability-ci/backend.pid ]; then
+            kill "$(cat .observability-ci/backend.pid)" || true
+          fi
+
+      - name: Upload observability smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-stack-smoke-artifacts
+          path: |
+            .observability-ci/
+          if-no-files-found: ignore
+          retention-days: 7

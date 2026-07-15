@@ -1,4 +1,6 @@
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,6 +75,8 @@ def test_gitignore_and_env_example_keep_local_secrets_out_of_repo():
 
     for pattern in (".env", "*.env", "cloud_agent/agent/.env", "ops/cloud_agent.env"):
         assert pattern in gitignore
+    for pattern in ("*.pem", "*.tgz", "*.db", "deep_research/app/data/"):
+        assert pattern in gitignore
     assert "!ops/*.env.example" in gitignore
 
     for name in SECRET_ENV_NAMES:
@@ -82,6 +86,52 @@ def test_gitignore_and_env_example_keep_local_secrets_out_of_repo():
     forbidden_values = ("sk-", "4AMDiDiWei", "YOUR_MYSQL_PASSWORD", "YOUR_NEO4J_PASSWORD")
     for value in forbidden_values:
         assert value not in env_example
+
+
+def test_dockerignore_keeps_secret_and_runtime_artifacts_out_of_images():
+    dockerignore = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
+
+    for pattern in ("*.pem", "*.tgz", "*.db", "deep_research/app/data/"):
+        assert pattern in dockerignore
+
+
+def test_bocha_api_smoke_uses_environment_secret_only():
+    smoke_test = (PROJECT_ROOT / "deep_research" / "app" / "test" / "bocha_api_test.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'os.getenv("BOCHA_API_KEY"' in smoke_test
+    assert "sk-" not in smoke_test
+
+
+def test_ubuntu_acceptance_requires_deployment_secret_without_hardcoded_fallback():
+    script = (PROJECT_ROOT / "ops" / "ubuntu_ci_acceptance.sh").read_text(encoding="utf-8")
+
+    assert "DEEPSEEK_API_KEY or DEEPSEEK_API_KEY_FILE must be set" in script
+    assert not re.search(
+        r"(?m)^\s*export\s+DEEPSEEK_API_KEY\s*=\s*[^$\s#]",
+        script,
+    )
+
+
+def test_api_switch_handoff_does_not_embed_or_assign_api_keys():
+    handoff = (PROJECT_ROOT / "API_SWITCH_HANDOFF.md").read_text(encoding="utf-8")
+
+    assert "sk-" not in handoff
+    assert "DEEPSEEK_API_KEY=" not in handoff
+    assert "DEEPSEEK_API_KEY:" not in handoff
+
+
+def test_runtime_memory_database_is_not_tracked_by_git():
+    result = subprocess.run(
+        ["git", "ls-files", "deep_research/app/data/memory.db"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == ""
 
 
 def test_compose_exposes_file_secret_envs_without_plaintext_values():

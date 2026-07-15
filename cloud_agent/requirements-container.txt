@@ -1,2 +1,8 @@
+# The full Agent runtime is retained in the container, but deployments target
+# CPU hosts. Pin the official CPU wheel so pip does not resolve Linux CUDA
+# runtime packages through sentence-transformers.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu ; platform_system == "Linux"
+
 # Container builds use the same backend/Agent runtime dependency set as CI.
 -r agent/requirements.txt
