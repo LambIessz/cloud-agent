@@ -78,7 +78,14 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: cloud_agent/front/cloud_agent
-        run: npm ci --registry=https://registry.npmjs.org
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --registry=https://registry.npmjs.org --no-audit --fund=false --prefer-offline && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              sleep "$((attempt * 10))"
+            fi
+          done
+          exit 1
 
       - name: Audit frontend production dependencies
         id: npm-audit
