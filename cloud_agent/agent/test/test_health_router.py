@@ -75,7 +75,5 @@ def test_readyz_returns_ready_after_agent_graph_initialization(monkeypatch):
 
 
 def test_app_main_registers_root_health_routes():
-    route_paths = {route.path for route in app_main.app.routes}
-
-    assert "/healthz" in route_paths
-    assert "/readyz" in route_paths
+    assert app_main.app.url_path_for("healthz") == "/healthz"
+    assert app_main.app.url_path_for("readyz") == "/readyz"

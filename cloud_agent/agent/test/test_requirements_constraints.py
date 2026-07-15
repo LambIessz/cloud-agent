@@ -61,6 +61,7 @@ DEEP_RESEARCH_FOUNDATION_SECURITY_PINS = {
     "python-dotenv==1.2.2",
     "python-multipart==0.0.31",
     "requests==2.33.0",
+    "setuptools==83.0.0",
     "urllib3==2.7.0",
     "Werkzeug==3.1.6",
     "wheel==0.46.2",

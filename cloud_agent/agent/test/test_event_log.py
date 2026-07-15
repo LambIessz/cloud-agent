@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import sys
@@ -680,7 +681,10 @@ def test_stream_chat_runtime_writes_user_scoped_semantic_cache_with_metadata(cap
     assert kwargs["user_id"] == "plain_user"
     assert kwargs["estimated_prompt_tokens"] == 100
     assert kwargs["estimated_completion_tokens"] == 20
-    assert kwargs["estimated_cost_usd"] is None
+    if os.getenv("CLOUD_AGENT_LLM_PRICING_CONFIG"):
+        assert kwargs["estimated_cost_usd"] is not None and kwargs["estimated_cost_usd"] > 0
+    else:
+        assert kwargs["estimated_cost_usd"] is None
     assert kwargs["model"] == "qwen-plus"
     assert kwargs["raise_on_error"] is True
 
