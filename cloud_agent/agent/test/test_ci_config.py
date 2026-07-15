@@ -70,7 +70,8 @@ def test_github_actions_workflow_runs_canonical_regression_without_real_secrets(
     ]
     assert len(setup_node_steps) == 1
     assert setup_node_steps[0]["with"]["node-version"] == "24"
-    assert setup_node_steps[0]["with"]["cache"] == "npm"
+    assert "cache" not in setup_node_steps[0]["with"]
+    assert env["NPM_CONFIG_CACHE"] == "${{ runner.temp }}/npm-cache"
 
     run_commands = "\n".join(
         step.get("run", "")
@@ -368,6 +369,7 @@ def test_supply_chain_workflow_blocks_high_risk_findings_for_both_python_project
     assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] <= 30
     assert job["env"]["NPM_CONFIG_REGISTRY"] == "https://registry.npmjs.org"
+    assert job["env"]["NPM_CONFIG_CACHE"] == "${{ runner.temp }}/npm-cache"
     assert job["env"]["PYTHONUTF8"] == "1"
     assert "sk-" not in workflow_text
     assert "".join(("secrets", ".")) not in workflow_text

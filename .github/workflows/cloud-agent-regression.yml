@@ -29,6 +29,7 @@ jobs:
       DEEPSEEK_API_KEY: ci-placeholder
       BASE_URL: https://api.deepseek.com
       MODEL: deepseek-chat
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,8 +48,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
 
       - name: Install Python dependencies
         run: |

@@ -27,6 +27,7 @@ jobs:
       PYTHONUTF8: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,8 +74,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: cloud_agent/front/cloud_agent/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: cloud_agent/front/cloud_agent
