@@ -71,7 +71,6 @@ def test_github_actions_workflow_runs_canonical_regression_without_real_secrets(
     assert len(setup_node_steps) == 1
     assert setup_node_steps[0]["with"]["node-version"] == "24"
     assert "cache" not in setup_node_steps[0]["with"]
-    assert env["NPM_CONFIG_CACHE"] == "${{ runner.temp }}/npm-cache"
 
     run_commands = "\n".join(
         step.get("run", "")
@@ -80,6 +79,7 @@ def test_github_actions_workflow_runs_canonical_regression_without_real_secrets(
     )
     assert "python -m pip install -r cloud_agent/requirements-container.txt" in run_commands
     assert "npm ci" in run_commands
+    assert 'export npm_config_cache="${RUNNER_TEMP}/npm-cache"' in run_commands
     assert "bash test_all.sh" in run_commands
 
     lowered = workflow_text.lower()
@@ -369,7 +369,6 @@ def test_supply_chain_workflow_blocks_high_risk_findings_for_both_python_project
     assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] <= 30
     assert job["env"]["NPM_CONFIG_REGISTRY"] == "https://registry.npmjs.org"
-    assert job["env"]["NPM_CONFIG_CACHE"] == "${{ runner.temp }}/npm-cache"
     assert job["env"]["PYTHONUTF8"] == "1"
     assert "sk-" not in workflow_text
     assert "".join(("secrets", ".")) not in workflow_text
@@ -390,6 +389,7 @@ def test_supply_chain_workflow_blocks_high_risk_findings_for_both_python_project
     assert "cloud_agent/agent/requirements.txt" in run_commands
     assert "deep_research/requirements.txt" in run_commands
     assert "npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high" in run_commands
+    assert 'export npm_config_cache="${RUNNER_TEMP}/npm-cache"' in run_commands
     assert "steps.cloud-agent-pip-audit.outcome" in run_commands
     assert "steps.npm-audit.outcome" in run_commands
     assert "steps.deep-research-pip-audit.outcome" in run_commands

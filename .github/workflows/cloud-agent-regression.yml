@@ -29,7 +29,6 @@ jobs:
       DEEPSEEK_API_KEY: ci-placeholder
       BASE_URL: https://api.deepseek.com
       MODEL: deepseek-chat
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,6 +58,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: cloud_agent/front/cloud_agent
         run: |
+          export npm_config_cache="${RUNNER_TEMP}/npm-cache"
           for attempt in 1 2 3; do
             npm ci --registry=https://registry.npmjs.org --no-audit --fund=false --prefer-offline && exit 0
             if [ "$attempt" -lt 3 ]; then
