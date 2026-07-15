@@ -1,8 +1,10 @@
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 from core.memory.memory_manager import MemoryManager
+from core.memory.long_term import COLLECTION_NAME, LongTermMemory
 
 
 class _ShortTerm:
@@ -123,3 +125,63 @@ def test_background_extract_emits_degradation_without_error_message(capsys):
     assert events[0]["component"] == "memory"
     assert events[0]["operation"] == "background_preference_extract"
     assert events[0]["error_type"] == "RuntimeError"
+
+
+class _FakeSchema:
+    def __init__(self):
+        self.fields = []
+
+    def add_field(self, *args, **kwargs):
+        self.fields.append((args, kwargs))
+
+
+class _FakeIndexParams:
+    def __init__(self):
+        self.indexes = []
+
+    def add_index(self, *args, **kwargs):
+        self.indexes.append((args, kwargs))
+
+
+class _FakeMilvusClient:
+    def __init__(self, *, exists):
+        self.exists = exists
+        self.calls = []
+
+    def has_collection(self, collection_name):
+        self.calls.append(("has_collection", collection_name))
+        return self.exists
+
+    def create_schema(self):
+        self.calls.append(("create_schema",))
+        return _FakeSchema()
+
+    def prepare_index_params(self):
+        self.calls.append(("prepare_index_params",))
+        return _FakeIndexParams()
+
+    def create_collection(self, **kwargs):
+        self.calls.append(("create_collection", kwargs["collection_name"]))
+
+    def load_collection(self, **kwargs):
+        self.calls.append(("load_collection", kwargs["collection_name"]))
+
+
+def test_long_term_memory_loads_existing_or_new_milvus_collection(monkeypatch):
+    fake_pymilvus = SimpleNamespace(
+        DataType=SimpleNamespace(INT64="INT64", VARCHAR="VARCHAR", FLOAT_VECTOR="FLOAT_VECTOR")
+    )
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_pymilvus)
+
+    for exists in (True, False):
+        client = _FakeMilvusClient(exists=exists)
+        memory = LongTermMemory.__new__(LongTermMemory)
+        memory._client = client
+
+        memory._ensure_collection()
+
+        assert ("load_collection", COLLECTION_NAME) in client.calls
+        if exists:
+            assert not any(call[0] == "create_collection" for call in client.calls)
+        else:
+            assert ("create_collection", COLLECTION_NAME) in client.calls

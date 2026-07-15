@@ -30,7 +30,9 @@ class SupportAgentNode:
     def _build_steps(self, query: str) -> List[str]:
         query_lower = query.lower()
 
-        if "ssh" in query_lower or "22" in query_lower or "连接" in query:
+        if "ssh" in query_lower or "22" in query_lower or (
+            "连接" in query and "rds" not in query_lower and "数据库" not in query
+        ):
             return [
                 "确认 ECS 实例处于 Running 状态，且系统没有处于启动中、迁移中或异常状态。",
                 "检查实例是否绑定公网 IP 或 EIP；如果只使用内网 IP，需要确认访问端与实例在可达的 VPC/网络内。",
@@ -59,7 +61,7 @@ class SupportAgentNode:
 
         if "rds" in query_lower or "数据库" in query:
             return [
-                "确认 RDS 实例状态正常，连接地址、端口、账号和密码配置正确。",
+                "确认 RDS 实例状态正常，连接地址、端口、账号密码配置正确。",
                 "检查 ECS 与 RDS 是否在同一 VPC，或是否已配置正确的网络互通方案。",
                 "检查 RDS 白名单或安全访问策略是否允许 ECS 的内网 IP 访问。",
                 "在 ECS 上使用 telnet、nc 或数据库客户端测试 RDS 端口连通性。",

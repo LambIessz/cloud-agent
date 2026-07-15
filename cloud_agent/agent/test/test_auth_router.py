@@ -350,6 +350,7 @@ def test_chat_endpoint_production_passes_authenticated_identity_only(monkeypatch
     assert captured["authenticated_user_id"] == "auth_user"
     assert captured["authenticated_tenant_id"] == "auth_tenant"
     assert captured["request_id"].startswith("req_")
+    assert response.headers["x-request-id"] == captured["request_id"]
     assert "body_user" not in response.text
     assert "auth_user" not in response.text
 

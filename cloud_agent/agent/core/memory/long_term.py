@@ -6,6 +6,7 @@
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class LongTermMemory:
 
     用法::
 
-        mem = LongTermMemory(embedding_api_key="sk-...")
+        mem = LongTermMemory(embedding_api_key="<api-key>")
         await mem.initialize()
 
         await mem.save_preference("user1", "language", "Chinese")
@@ -39,11 +40,13 @@ class LongTermMemory:
         port: int = 19530,
         api_key: str | None = None,
         embedding_api_key: str | None = None,
+        uri: str | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._api_key = api_key
         self._embedding_api_key = embedding_api_key
+        self._uri = uri
         self._client: Any = None
         self._embeddings: Any = None
         self._available: bool = False
@@ -57,11 +60,23 @@ class LongTermMemory:
 
         Sets _available=False on failure (no exception raised).
         """
+        if os.getenv("CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+            logger.info("LongTermMemory disabled by CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED")
+            self._available = False
+            return
+
         try:
             from pymilvus import MilvusClient  # type: ignore[import]
             from langchain_huggingface import HuggingFaceEmbeddings
 
-            uri = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "milvus_lite_memory.db")
+            uri = self._uri or os.getenv("CLOUD_AGENT_LONG_TERM_MEMORY_URI", "").strip()
+            if not uri:
+                uri = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                    "milvus_lite_memory.db",
+                )
+            if "://" not in uri:
+                Path(uri).parent.mkdir(parents=True, exist_ok=True)
             connect_kwargs: dict[str, Any] = {"uri": uri}
 
             self._client = MilvusClient(**connect_kwargs)
@@ -185,27 +200,27 @@ class LongTermMemory:
         """Create the Milvus collection and index if they do not exist."""
         from pymilvus import DataType  # type: ignore[import]
 
-        if self._client.has_collection(COLLECTION_NAME):
-            return
+        if not self._client.has_collection(COLLECTION_NAME):
+            schema = self._client.create_schema()
+            schema.add_field("id", DataType.INT64, is_primary=True, auto_id=True)
+            schema.add_field("user_id", DataType.VARCHAR, max_length=128)
+            schema.add_field("content", DataType.VARCHAR, max_length=2048)
+            schema.add_field("memory_type", DataType.VARCHAR, max_length=64)
+            schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
 
-        schema = self._client.create_schema()
-        schema.add_field("id", DataType.INT64, is_primary=True, auto_id=True)
-        schema.add_field("user_id", DataType.VARCHAR, max_length=128)
-        schema.add_field("content", DataType.VARCHAR, max_length=2048)
-        schema.add_field("memory_type", DataType.VARCHAR, max_length=64)
-        schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
+            index_params = self._client.prepare_index_params()
+            index_params.add_index(
+                "embedding",
+                index_type="IVF_FLAT",
+                metric_type="COSINE",
+                params={"nlist": 128},
+            )
 
-        index_params = self._client.prepare_index_params()
-        index_params.add_index(
-            "embedding",
-            index_type="IVF_FLAT",
-            metric_type="COSINE",
-            params={"nlist": 128},
-        )
+            self._client.create_collection(
+                collection_name=COLLECTION_NAME,
+                schema=schema,
+                index_params=index_params,
+            )
+            logger.info("LongTermMemory: created Milvus collection '%s'", COLLECTION_NAME)
 
-        self._client.create_collection(
-            collection_name=COLLECTION_NAME,
-            schema=schema,
-            index_params=index_params,
-        )
-        logger.info("LongTermMemory: created Milvus collection '%s'", COLLECTION_NAME)
+        self._client.load_collection(collection_name=COLLECTION_NAME)

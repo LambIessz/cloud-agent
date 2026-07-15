@@ -1,9 +1,13 @@
+import ast
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
 from core.mcp.mcp_manager import MCPManager, MCPToolRegistry
+
+AGENT_DIR = Path(__file__).resolve().parents[1]
 
 
 class _Tool:
@@ -91,6 +95,27 @@ def _degradation_events(output: str):
         if line.startswith("[Degradation] "):
             events.append(json.loads(line.removeprefix("[Degradation] ")))
     return events
+
+
+def test_cloud_platform_server_has_unique_mcp_tool_function_names():
+    server_path = AGENT_DIR / "mcp_servers" / "cloud_platform_server.py"
+    tree = ast.parse(server_path.read_text(encoding="utf-8"))
+    tool_names = []
+
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        has_mcp_tool_decorator = any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "tool"
+            for decorator in node.decorator_list
+        )
+        if has_mcp_tool_decorator:
+            tool_names.append(node.name)
+
+    duplicates = {name for name in tool_names if tool_names.count(name) > 1}
+    assert duplicates == set()
 
 
 def test_registry_discovers_tools_once_and_applies_allowlists(tmp_path):

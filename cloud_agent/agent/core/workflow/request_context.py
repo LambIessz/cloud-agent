@@ -11,6 +11,7 @@ def ensure_request_metadata(metadata: dict[str, Any] | None = None) -> dict[str,
     """Return metadata with a request_id, preserving existing values."""
     updated = dict(metadata or {})
     updated.setdefault("request_id", new_request_id())
+    updated.setdefault("user_id_hash", "unknown")
     return updated
 
 

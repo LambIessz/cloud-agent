@@ -149,7 +149,7 @@ class OrchestratorAgent:
             "选型", "推广", "返佣", "故障", "排查", "连接", "端口", "成本", "降本",
             "优化", "规格", "限制", "上限", "配额",
         ]
-        if self._has_any(text, out_of_scope_keywords) and not self._has_any(text, cloud_business_keywords):
+        if self._has_any(text, out_of_scope_keywords) and not self._has_any(text, cloud_keywords):
             return self._build_route_result(
                 "fallback_agent",
                 metadata,
@@ -164,7 +164,7 @@ class OrchestratorAgent:
             "公网 ip", "rds连接失败", "rds 连接失败", "启动失败", "starting",
             "状态异常", "故障", "排查", "丢包", "延迟高",
         ]
-        metric_problem_keywords = ["cpu", "内存", "负载", "异常升高", "飙高"]
+        metric_problem_keywords = ["异常升高", "飙高", "负载过高", "高负载"]
         if self._has_any(text, support_keywords) or (
             self._has_any(text, metric_problem_keywords) and self._has_any(text, cloud_keywords)
         ):
@@ -182,8 +182,10 @@ class OrchestratorAgent:
         ]
         recommendation_keywords = [
             "推荐", "选型", "买哪款", "哪款合适", "配置建议", "适合", "预算",
-            "高并发", "java", "mysql",
+            "高并发",
         ]
+        recommendation_selection_keywords = ["怎么选", "如何选"]
+        recommendation_hardware_keywords = ["gpu", "cpu", "实例", "规格", "配置"]
         if self._has_any(text, finops_keywords):
             secondary = "recommendation" if self._has_any(text, recommendation_keywords) else None
             return self._build_route_result(
@@ -222,7 +224,10 @@ class OrchestratorAgent:
                 is_finops_workflow=False,
             )
 
-        if self._has_any(text, recommendation_keywords):
+        if self._has_any(text, recommendation_keywords) or (
+            self._has_any(text, recommendation_selection_keywords)
+            and self._has_any(text, recommendation_hardware_keywords)
+        ):
             return self._build_route_result(
                 "recommendation_agent",
                 metadata,
@@ -252,6 +257,15 @@ class OrchestratorAgent:
                 metadata,
                 "未识别到云平台业务关键词，进入 fallback",
                 "fallback",
+                is_finops_workflow=False,
+            )
+
+        if self._has_any(text, ["云服务器", "云资源", "云主机"]):
+            return self._build_route_result(
+                "product_agent",
+                metadata,
+                "云资源咨询意图不明确，默认进入产品咨询",
+                "product",
                 is_finops_workflow=False,
             )
 

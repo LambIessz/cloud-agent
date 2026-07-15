@@ -34,6 +34,59 @@ _background_extract_tasks: set[asyncio.Task] = set()
 _semantic_cache_write_tasks: set[asyncio.Task] = set()
 
 
+class _UnavailableMemoryStore:
+    available = False
+
+
+class _SmokeMemory:
+    short_term = _UnavailableMemoryStore()
+    long_term = _UnavailableMemoryStore()
+
+
+class _SmokeChunk:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _SmokeGraph:
+    async def ainvoke(self, state: dict, config: dict | None = None):
+        from langchain_core.messages import AIMessage
+
+        query = _last_user_query(state)
+        return {"messages": [AIMessage(content=f"real backend smoke reply: {query}")]}
+
+    async def astream_events(self, state: dict, config: dict | None = None, version: str | None = None):
+        from langchain_core.messages import AIMessage
+
+        query = _last_user_query(state)
+        response = f"real backend smoke reply: {query}"
+        yield {"event": "on_chain_start", "name": "orchestrator", "data": {}}
+        await asyncio.sleep(0)
+        yield {"event": "on_chain_start", "name": "fallback_agent", "data": {}}
+        for chunk in ("real backend smoke reply: ", query):
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "fallback_agent",
+                "data": {"chunk": _SmokeChunk(chunk)},
+            }
+            await asyncio.sleep(0)
+        yield {
+            "event": "on_chain_end",
+            "name": "graph",
+            "data": {"output": {"messages": [AIMessage(content=response)]}},
+        }
+
+
+def _last_user_query(state: dict) -> str:
+    messages = state.get("messages") if isinstance(state, dict) else None
+    if not messages:
+        return ""
+    last_message = messages[-1]
+    if isinstance(last_message, tuple) and len(last_message) > 1:
+        return str(last_message[1])
+    return str(getattr(last_message, "content", last_message))
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -75,6 +128,84 @@ def _print_degradation_summary() -> None:
 
 def _mapping_or_empty(value):
     return value if isinstance(value, dict) else {}
+
+
+def _sse_data(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _message_content(message) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return str(content or "")
+
+
+def _last_message_from_output(output):
+    if isinstance(output, dict):
+        messages = output.get("messages")
+        if messages:
+            return messages[-1]
+    messages = getattr(output, "messages", None)
+    if messages:
+        return messages[-1]
+    return None
+
+
+def _graph_event_name(event: dict) -> str:
+    return str(event.get("event") or event.get("event_type") or "")
+
+
+def _graph_event_step_name(event: dict) -> str | None:
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_chain_start", "on_tool_start"}:
+        return None
+    metadata = _mapping_or_empty(event.get("metadata"))
+    name = event.get("name") or metadata.get("langgraph_node")
+    return str(name) if name else None
+
+
+def _graph_event_delta(event: dict) -> str:
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_chat_model_stream", "on_llm_stream"}:
+        return ""
+    data = _mapping_or_empty(event.get("data"))
+    chunk = data.get("chunk")
+    if isinstance(chunk, str):
+        return chunk
+    return _message_content(chunk)
+
+
+def _graph_event_final_message(event: dict):
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_chain_end", "on_graph_end"}:
+        return None
+    data = _mapping_or_empty(event.get("data"))
+    return _last_message_from_output(data.get("output"))
+
+
+async def _iter_graph_events(state: dict, config: dict):
+    try:
+        stream = graph.astream_events(state, config=config, version="v2")
+    except TypeError:
+        stream = graph.astream_events(state, config=config)
+    async for event in stream:
+        if isinstance(event, dict):
+            yield event
+
+
+async def _invoke_graph(state: dict, config: dict):
+    if asyncio.iscoroutinefunction(graph.ainvoke):
+        return await graph.ainvoke(state, config=config)
+    return await asyncio.to_thread(asyncio.run, graph.ainvoke(state, config=config))
 
 
 def _first_non_negative_int(*values) -> int | None:
@@ -456,6 +587,14 @@ def _schedule_semantic_cache_write(
 async def init_agent_system():
     global graph, memory
     if graph is None:
+        if _env_flag("CLOUD_AGENT_SMOKE_FAKE_GRAPH"):
+            print("Initializing browser smoke fake graph...")
+            graph = _SmokeGraph()
+            memory = _SmokeMemory()
+            await semantic_cache.initialize()
+            _print_degradation_summary()
+            print("Browser smoke fake graph initialized.")
+            return
         print("🚀 初始化 Multi-Agent 图编排...")
         graph_manager = AgentGraphManager()
         graph = graph_manager.build_graph()
@@ -698,6 +837,9 @@ async def stream_chat(
                         status="unavailable",
                     )
                 )
+            stream_mode = "fallback"
+            streamed_response_text = False
+            response_message = None
             if cache_hit:
                 _emit_cache_benefit_event(
                     request_id=request_id,
@@ -711,6 +853,14 @@ async def stream_chat(
                 print(
                     f"[ChatService] request_id={request_id} semantic_cache_hit level={cache_hit['level']} "
                     f"distance={cache_hit['distance']:.4f}"
+                )
+                stream_mode = "cache"
+                yield _sse_data(
+                    {
+                        "event_type": "stream_start",
+                        "stream_mode": stream_mode,
+                        "request_id": request_id,
+                    }
                 )
             else:
                 print(
@@ -742,8 +892,48 @@ async def stream_chat(
                         "request_id": request_id,
                     }
                 }
+                stream_mode = "native" if hasattr(graph, "astream_events") else "fallback"
+                yield _sse_data(
+                    {
+                        "event_type": "stream_start",
+                        "stream_mode": stream_mode,
+                        "request_id": request_id,
+                    }
+                )
                 try:
-                    result = await asyncio.to_thread(asyncio.run, graph.ainvoke(state, config=config)) if not asyncio.iscoroutinefunction(graph.ainvoke) else await graph.ainvoke(state, config=config)
+                    if stream_mode == "native":
+                        streamed_parts = []
+                        async for event in _iter_graph_events(state, config):
+                            step_name = _graph_event_step_name(event)
+                            if step_name:
+                                yield _sse_data(
+                                    {
+                                        "event_type": "agent_step",
+                                        "stream_mode": stream_mode,
+                                        "step": step_name,
+                                    }
+                                )
+                            delta = _graph_event_delta(event)
+                            if delta:
+                                streamed_parts.append(delta)
+                                streamed_response_text = True
+                                yield _sse_data(
+                                    {
+                                        "event_type": "message_delta",
+                                        "stream_mode": stream_mode,
+                                        "content": delta,
+                                    }
+                                )
+                            final_message = _graph_event_final_message(event)
+                            if final_message is not None:
+                                response_message = final_message
+                        if response_message is None:
+                            from langchain_core.messages import AIMessage
+
+                            response_message = AIMessage(content="".join(streamed_parts))
+                    else:
+                        result = await _invoke_graph(state, config)
+                        response_message = result["messages"][-1]
                 except Exception as exc:
                     _emit_request_end_event(
                         request_id=request_id,
@@ -754,8 +944,7 @@ async def stream_chat(
                         error_type=exc.__class__.__name__,
                     )
                     raise
-                response_message = result["messages"][-1]
-                response_text = response_message.content
+                response_text = _message_content(response_message)
                 _schedule_semantic_cache_write(
                     query,
                     response_text,
@@ -822,10 +1011,18 @@ async def stream_chat(
                 
             # 流式返回大模型结果
             chunk_size = 5
-            for i in range(0, len(response_text), chunk_size):
-                chunk = response_text[i:i+chunk_size]
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
-                await asyncio.sleep(0.02)
+            if not streamed_response_text:
+                chunk_size = 5
+                for i in range(0, len(response_text), chunk_size):
+                    chunk = response_text[i:i+chunk_size]
+                    yield _sse_data(
+                        {
+                            "event_type": "message_delta",
+                            "stream_mode": stream_mode,
+                            "content": chunk,
+                        }
+                    )
+                    await asyncio.sleep(0.02)
 
             trace_span.set_success()
             _emit_request_end_event(
@@ -835,7 +1032,14 @@ async def stream_chat(
                 request_start_ms=request_start_ms,
                 status="success",
             )
-            yield f"data: {json.dumps({'done': True, 'request_id': request_id})}\n\n"
+            yield _sse_data(
+                {
+                    "event_type": "done",
+                    "done": True,
+                    "request_id": request_id,
+                    "stream_mode": stream_mode,
+                }
+            )
         except Exception as exc:
             trace_span.set_error(exc.__class__.__name__)
             raise

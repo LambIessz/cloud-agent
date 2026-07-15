@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 from core.mcp.mcp_manager import get_global_mcp_tool_registry
 from core.workflow.state import AgentState
+from core.workflow.llm_metrics import LLMCallMetricsCallback
 from agents.billing_agent import UserIdInjector
 from core.workflow.request_context import get_request_id
 from core.workflow.finops_validator import extract_finops_facts, validate_finops_response
@@ -43,7 +44,18 @@ class FinOpsAgentNode:
                 "tenant_id": state.get("tenant_id", "default_tenant"),
                 "user_id_hash": metadata.get("user_id_hash", "unknown"),
                 "request_id": get_request_id(metadata),
-            }
+            },
+            "callbacks": [
+                LLMCallMetricsCallback(
+                    request_id=get_request_id(metadata),
+                    user_id_hash=metadata.get("user_id_hash", "unknown"),
+                    tenant_id=state.get("tenant_id", "default_tenant"),
+                    component="finops_agent",
+                    operation="react_agent",
+                    fallback_model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                )
+            ],
         }
 
         tools = await self.tool_registry.get_tools_for_agent(

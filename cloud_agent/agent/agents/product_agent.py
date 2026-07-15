@@ -8,6 +8,8 @@ from langgraph.prebuilt import create_react_agent
 from tools.vector_tool import query_vector_db
 from tools.graph_tool import query_knowledge_graph
 from core.workflow.state import AgentState
+from core.workflow.llm_metrics import LLMCallMetricsCallback
+from core.workflow.request_context import ensure_request_metadata, get_request_id
 from typing import Dict, Any
 
 class ProductAgentNode:
@@ -32,6 +34,26 @@ class ProductAgentNode:
         供主 LangGraph 调用的处理函数
         """
         memory_context = state.get("memory_context", "")
+        metadata = ensure_request_metadata(state.get("metadata", {}))
+        config = {
+            "configurable": {
+                "user_id": state.get("user_id", "unknown"),
+                "tenant_id": state.get("tenant_id", "default_tenant"),
+                "user_id_hash": metadata.get("user_id_hash", "unknown"),
+                "request_id": get_request_id(metadata),
+            },
+            "callbacks": [
+                LLMCallMetricsCallback(
+                    request_id=get_request_id(metadata),
+                    user_id_hash=metadata.get("user_id_hash", "unknown"),
+                    tenant_id=state.get("tenant_id", "default_tenant"),
+                    component="product_agent",
+                    operation="react_agent",
+                    fallback_model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                )
+            ],
+        }
         system_prompt = f"""你是一个专业的云服务平台【产品咨询Agent】。
 你的任务是解答用户关于云产品（如云服务器ECS、专有网络VPC等）的疑问。
 你有两个强大的检索工具可供使用：
@@ -72,7 +94,7 @@ class ProductAgentNode:
         print("💡 [ProductAgent] 正在处理产品咨询请求...")
         
         # 传递整个对话历史给内部 agent
-        result = await inner_agent.ainvoke({"messages": state["messages"]})
+        result = await inner_agent.ainvoke({"messages": state["messages"]}, config=config)
         
         # 提取最后一条 AI 消息返回给主图
         final_message = result["messages"][-1]

@@ -35,5 +35,9 @@ async def chat_endpoint(
             authenticated_user_id=authenticated_identity.user_id,
             authenticated_tenant_id=authenticated_identity.tenant_id,
         ),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Request-Id": request_id,
+        },
     )

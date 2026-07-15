@@ -1,11 +1,9 @@
 import os
 import re
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_neo4j import Neo4jGraph
-from langchain_neo4j import GraphCypherQAChain
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
+from core.workflow.error_sanitizer import sanitized_tool_error_text
 
 # 加载环境变量
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
@@ -20,6 +18,9 @@ def _get_graph_chain():
     global _graph_chain_instance, _graph_instance
     if _graph_chain_instance is not None:
         return _graph_chain_instance
+
+    from langchain_openai import ChatOpenAI
+    from langchain_neo4j import GraphCypherQAChain, Neo4jGraph
 
     print("🔌 [Init] 正在连接 Neo4j 数据库...")
     graph = Neo4jGraph(
@@ -126,7 +127,7 @@ def _fallback_graph_keyword_search(query: str) -> str:
         nodes = graph.query(node_cypher)
         relations = graph.query(rel_cypher)
     except Exception as exc:
-        return f"图谱关键词检索失败: {str(exc)}"
+        return sanitized_tool_error_text("图谱关键词检索", exc)
 
     if not nodes and not relations:
         return "未查询到相关图谱信息。"
@@ -154,12 +155,15 @@ def query_knowledge_graph(query: str) -> str:
     当用户询问云产品的架构、包含关系、配置限制（例如：ecs.g8a.xlarge能挂载几块网卡？北京可用区有哪些实例？退款有什么限制？）时，使用此工具。
     输入参数 query 必须是明确的自然语言查询句子。
     """
+    if os.getenv("CLOUD_AGENT_KNOWLEDGE_GRAPH_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        return "知识图谱检索当前已关闭。"
+
     try:
         chain = _get_graph_chain()
         result = chain.invoke({"query": query})
         return result.get('result', "未找到相关图谱信息。")
     except Exception as e:
         fallback_result = _fallback_graph_keyword_search(query)
-        if fallback_result and "失败" not in fallback_result:
+        if fallback_result and "失败" not in fallback_result and "error_type=" not in fallback_result:
             return fallback_result
-        return f"查询图谱时发生错误: {str(e)}；关键词兜底结果：{fallback_result}"
+        return sanitized_tool_error_text("查询图谱", e)

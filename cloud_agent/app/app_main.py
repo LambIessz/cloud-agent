@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from app_config.cors import get_cors_origins
 from router import chat, health, metrics
 from service.chat_service import init_agent_system, shutdown_agent_system
 
@@ -31,7 +32,7 @@ app = FastAPI(title="Multi-Agent Cloud Service API", lifespan=lifespan)
 # 配置跨域
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

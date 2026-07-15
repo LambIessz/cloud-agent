@@ -30,6 +30,11 @@ class SemanticCache:
         self._available: bool = False
 
     async def initialize(self) -> None:
+        if os.getenv("CLOUD_AGENT_SEMANTIC_CACHE_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+            print("SemanticCache disabled by CLOUD_AGENT_SEMANTIC_CACHE_ENABLED")
+            self._available = False
+            return
+
         try:
             from pymilvus import MilvusClient
             from langchain_huggingface import HuggingFaceEmbeddings

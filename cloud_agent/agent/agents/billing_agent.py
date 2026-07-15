@@ -9,6 +9,7 @@ from core.mcp.mcp_manager import get_global_mcp_tool_registry
 from core.workflow.state import AgentState
 from core.workflow.request_context import get_request_id
 from core.workflow.tool_audit import build_tool_audit_event, elapsed_ms, emit_tool_audit, now_ms
+from core.workflow.llm_metrics import LLMCallMetricsCallback
 
 DEFAULT_TOOL_TIMEOUT_SECONDS = 30.0
 DEFAULT_TOOL_RETRY_COUNT = 0
@@ -155,7 +156,18 @@ class BillingAgentNode:
                 "tenant_id": state.get("tenant_id", "default_tenant"),
                 "user_id_hash": metadata.get("user_id_hash", "unknown"),
                 "request_id": get_request_id(metadata),
-            }
+            },
+            "callbacks": [
+                LLMCallMetricsCallback(
+                    request_id=get_request_id(metadata),
+                    user_id_hash=metadata.get("user_id_hash", "unknown"),
+                    tenant_id=state.get("tenant_id", "default_tenant"),
+                    component="billing_agent",
+                    operation="react_agent",
+                    fallback_model=getattr(self.llm, "model_name", None)
+                    or getattr(self.llm, "model", None),
+                )
+            ],
         }
         
         memory_context = state.get("memory_context", "")

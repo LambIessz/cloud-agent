@@ -9,10 +9,16 @@ from decimal import Decimal
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
+AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if AGENT_DIR not in sys.path:
+    sys.path.insert(0, AGENT_DIR)
+
+from core.workflow.error_sanitizer import sanitized_error_payload
+
 # ==============================================================================
 # 初始化环境配置
 # ==============================================================================
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+dotenv_path = os.path.join(AGENT_DIR, '.env')
 load_dotenv(dotenv_path)
 try:
     from config.secrets import load_file_secrets
@@ -252,8 +258,8 @@ def generate_ai_poster(prompt: str) -> str:
             last_error = data.get("message") or data.get("code") or f"HTTP {res.status_code}"
             sys.stderr.write(f"[AI-POSTER][QWEN] attempt={attempt} failed: {last_error}\n")
         except Exception as e:
-            last_error = str(e)
-            sys.stderr.write(f"[AI-POSTER][QWEN] attempt={attempt} exception: {last_error}\n")
+            last_error = e.__class__.__name__
+            sys.stderr.write(f"[AI-POSTER][QWEN] attempt={attempt} exception_type={last_error}\n")
 
     return json.dumps({"status": "error", "message": f"Qwen-Image 生成失败: {last_error}"}, ensure_ascii=False)
 
@@ -288,7 +294,7 @@ def query_user_orders(user_id: str, limit: int = 5) -> str:
                     
             return json.dumps({"status": "success", "data": results}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"查询数据库失败: {str(e)}"}, ensure_ascii=False)
+        return json.dumps(sanitized_error_payload("查询数据库", e), ensure_ascii=False)
     finally:
         if 'connection' in locals() and connection.open:
             connection.close()
@@ -319,7 +325,7 @@ def query_user_instances(user_id: str, limit: int = 5) -> str:
             return json.dumps({"status": "success", "data": result}, ensure_ascii=False)
             
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"查询数据库失败: {str(e)}"}, ensure_ascii=False)
+        return json.dumps(sanitized_error_payload("查询数据库", e), ensure_ascii=False)
     finally:
         if 'connection' in locals() and connection.open:
             connection.close()
@@ -391,13 +397,13 @@ def analyze_instance_usage(instance_id: str, user_id: str = "") -> str:
             }
             return json.dumps({"status": "success", "data": result}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"查询监控数据失败: {str(e)}"}, ensure_ascii=False)
+        return json.dumps(sanitized_error_payload("查询监控数据", e), ensure_ascii=False)
     finally:
         if 'connection' in locals() and connection.open:
             connection.close()
 
 @mcp.tool()
-def get_promotion_materials(product_name: str, user_id: str = "") -> str:
+def get_promotion_materials_by_name(product_name: str, user_id: str = "") -> str:
     """
     根据产品名称获取对应的推广海报、专属推广链接和返佣活动信息。
     当用户说“我想要分享这款产品”、“有没有GPU相关的活动”时调用。
