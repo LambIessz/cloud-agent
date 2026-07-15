@@ -10,12 +10,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from langchain_community.chat_models import ChatTongyi
-from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from .base import MemoryEntry, MemoryType
+from ..dashscope_compatible import build_chat_model, build_embeddings
 from .long_term import EpisodicMemoryStore, SemanticMemoryStore
 from .short_term import ShortTermMemory
 from .utils import extract_memory_from_messages, format_memories_for_prompt, merge_user_profile
@@ -31,11 +30,7 @@ except Exception:
     psycopg = None
 
 # 使用 langchain-milvus 新包（类名是 Milvus，不是 MilvusVectorStore）
-try:
-    from langchain_milvus import Milvus as MilvusVectorStore
-except ImportError:
-    # 降级到旧包
-    from langchain_community.vectorstores import Milvus as MilvusVectorStore
+from langchain_milvus import Milvus as MilvusVectorStore
 
 logger = logging.getLogger("mult_agents.memory")
 
@@ -205,9 +200,9 @@ class MemoryManager:
         if not milvus_host or not embedding_api_key:
             return
         try:
-            embeddings = DashScopeEmbeddings(
+            embeddings = build_embeddings(
                 model=embedding_model,
-                dashscope_api_key=embedding_api_key,
+                api_key=embedding_api_key,
             )
             self._milvus_store = MilvusVectorStore(
                 embedding_function=embeddings,
@@ -223,7 +218,11 @@ class MemoryManager:
         if not api_key:
             return
         try:
-            self._summary_llm = ChatTongyi(model=summary_model, temperature=0.1, dashscope_api_key=api_key)
+            self._summary_llm = build_chat_model(
+                model=summary_model,
+                temperature=0.1,
+                api_key=api_key,
+            )
         except Exception as exc:
             logger.warning("摘要模型初始化失败，降级规则压缩: %s", exc)
             self._summary_llm = None

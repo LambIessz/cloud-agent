@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain.agents import create_agent
@@ -20,6 +19,7 @@ if __package__ is None or __package__ == "":
     __package__ = "mult_agents"
 
 from .config import AppConfig
+from .dashscope_compatible import build_chat_model
 from .graph import build_app as build_workflow_app
 from .memory import MemoryManager
 from .prompts import PROMPTS
@@ -421,9 +421,7 @@ class AgentBundle:
 
 
 def build_agent(model: str, api_key: str, prompt_key: str, temperature: float, tools: list):
-    if api_key:
-        os.environ["DASHSCOPE_API_KEY"] = api_key
-    llm = ChatTongyi(model=model, temperature=temperature)
+    llm = build_chat_model(model=model, temperature=temperature, api_key=api_key)
     prompt = PROMPTS[prompt_key]
     return create_agent(model=llm, tools=tools, system_prompt=prompt)
 

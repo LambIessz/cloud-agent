@@ -3,21 +3,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pymilvus import connections, utility
+
+from ..dashscope_compatible import build_embeddings
 
 logger = logging.getLogger(__name__)
 
 
 # 使用 langchain-milvus 新包（类名是 Milvus，不是 MilvusVectorStore）
-try:
-    from langchain_milvus import Milvus as _MilvusVectorStore
-    _MILVUS_BACKEND = "langchain_milvus"
-except ImportError:
-    from langchain_community.vectorstores import Milvus as _MilvusVectorStore
-    _MILVUS_BACKEND = "langchain_community"
+from langchain_milvus import Milvus as _MilvusVectorStore
+
+
+_MILVUS_BACKEND = "langchain_milvus"
 
 
 @dataclass(frozen=True)
@@ -34,9 +33,9 @@ class RAGSystem:
     def __init__(self, api_key: str, config: Optional[RAGConfig] = None):
         self.config = config or RAGConfig()
         self.api_key = api_key
-        self.embeddings = DashScopeEmbeddings(
+        self.embeddings = build_embeddings(
             model=self.config.embedding_model,
-            dashscope_api_key=self.api_key,
+            api_key=self.api_key,
         )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.config.chunk_size,
