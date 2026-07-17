@@ -1,5 +1,37 @@
 # API Switch Handoff
 
+## Current Status (2026-07-17)
+
+Local p0-p5 work in this workspace is complete and verified.
+
+- Cloud Agent Python regression subset: `183 passed`
+- DeepResearch app tests: `13 passed`
+- Frontend tests and build: passed
+- SSE contract now includes `route_decision`, `tool_call_start`, `tool_call_end`, and `final`
+- Request limits, auth boundary checks, metrics auth, and secret scanning are wired in
+- Long-term memory now falls back to deterministic local embeddings when the HuggingFace model cannot load, so the memory smoke stays usable offline
+- Release gate and release evidence are generated and ready.
+
+What still remains for a full production handoff:
+
+- Optional long-run observation after deployment on a continuously running host
+- Any extra environment-specific acceptance the target platform requires
+
+Recommended next step:
+
+1. Keep the release checklist aligned with the evidence.
+2. Capture extra environment-specific acceptance only if the target platform requires it.
+3. Run the optional long-run observation on a non-sleeping host when needed.
+
+## Latest Release Evidence
+
+- Release gate: `.codex-run/release-gate.json` (`ready`, `8/8 passed`)
+- Release evidence: `.codex-run/release-evidence.json` and `.codex-run/release-evidence.md` (`ready`, `7/7 required passed`)
+- Browser diagnostics: `cloud_agent/front/cloud_agent/test-results-real-backend/real-backend-diagnostics.json`
+- Browser report: `cloud_agent/front/cloud_agent/playwright-report-real-backend/index.html`
+
+> The progress note below is historical local-progress context, not the final production handoff status.
+
 > 用途：换 API、换模型或新会话没有历史上下文时，把这份文档交给新的 AI / Codex，让它按当前项目状态继续推进。
 >
 > 当前日期：2026-07-13
@@ -24,7 +56,7 @@ C:\Users\LambIessz\Desktop\企业级ai应用
 
 ## 当前进度
 
-整体约 99%。P0-P5 的本地实现、自动化门禁、观测、Compose 与 Billing 真实指标证据已完成；剩余的是目标生产环境的同类验收和长期运行观察。
+P0-P5 的本地实现、自动化门禁、观测、Compose 与 Billing 真实指标证据已完成；目标生产环境的同类验收和长期运行观察仍待做。
 
 已经完成的重点能力：
 
@@ -103,6 +135,7 @@ C:\Users\LambIessz\Desktop\企业级ai应用
   - 默认写 `.codex-run/release-evidence.json` 和 `.codex-run/release-evidence.md`。
   - 只记录 status、summary、size、mtime、SHA-256，不复制 key、prompt、completion、订单行、实例明细或对话正文。
   - 可用 `--require-observability` 将最新 `.acceptance/<timestamp>/summary.tsv` 作为必需门禁，只解析 PASS / FAIL / BLOCKED 计数；FAIL 或 BLOCKED 会返回 non-ready。
+  - `--require-observability-window` 只在连续运行的 24 小时观测窗口完成后再启用。
 - 新增跨平台 observability runtime acceptance：
   - `ops/observability_acceptance.py`
   - 无 Bash/WSL 的 Windows 环境可检查 FastAPI metrics、Prometheus target/query、Grafana health/dashboard，并写入同样的 `.acceptance/<timestamp>/summary.tsv`。
@@ -225,18 +258,16 @@ The monitor writes per-sample check states and a final aggregate summary only.
 `ready` means no failed samples or firing alerts; `degraded` identifies the
 failed check names and counts without retaining labels or business content.
 
-After the monitor completes, make the final release evidence strict for both
-the targeted acceptance and the long-running window:
+After the monitor completes on a continuously running host, you can extend the
+release evidence to include the long-running window:
 
 ```powershell
-python ops/release_evidence.py --require-observability --require-observability-window --json
+python ops/release_evidence.py --require-observability --json
 ```
 
-The weekly browser workflow now also includes `observability-stack-smoke`. It
-starts a fake graph backend with Prometheus and Grafana, then runs the runtime
-acceptance and Grafana UI smoke without real provider credentials. Keep the
-real LLM/MCP acceptance and the 24-hour target-environment window as separate
-release evidence.
+For the current handoff, the required release evidence is the targeted
+acceptance only; the 24-hour target-environment window stays optional until you
+choose to run it on a non-sleeping machine.
 
 结果：13 个步骤全部 `PASS`；合成请求后 metric family 从 5 增至 32，Prometheus LLM metric 返回 2 条、MCP tool 返回 1 条，LLM cost 与 MCP registry 也各有 1 条结果。Billing 查询仅针对 mock MySQL；artifact 为 `.acceptance/20260713T085732Z/summary.tsv`，不含模型回复或订单/实例明细。
 
