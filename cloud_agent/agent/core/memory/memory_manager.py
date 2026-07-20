@@ -26,6 +26,7 @@ from core.workflow.degradation_audit import build_degradation_event, emit_degrad
 from .short_term import ShortTermMemory
 from .long_term import LongTermMemory
 from .preference_extractor import PreferenceExtractor
+from core.workflow.context_manager import build_context_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,20 @@ class MemoryManager:
             len(non_system), len(combined), user_id, session_id,
         )
 
+    async def get_session_checkpoint(self, user_id: str, session_id: str) -> dict[str, Any] | None:
+        return await self.short_term.get_checkpoint(user_id, session_id)
+
+    async def save_session_checkpoint(
+        self,
+        user_id: str,
+        session_id: str,
+        checkpoint: dict[str, Any],
+    ) -> None:
+        await self.short_term.save_checkpoint(user_id, session_id, checkpoint)
+
+    async def clear_session_checkpoint(self, user_id: str, session_id: str) -> None:
+        await self.short_term.clear_checkpoint(user_id, session_id)
+
     async def get_recent_messages(
         self, user_id: str, session_id: str
     ) -> list[dict[str, Any]]:
@@ -152,6 +167,32 @@ class MemoryManager:
             List of message dicts (may be empty if Redis is unavailable).
         """
         return await self.short_term.get_messages(user_id, session_id)
+
+    async def build_context_bundle(
+        self,
+        user_id: str,
+        session_id: str,
+        query: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        agent_names: list[str] | None = None,
+        system_constraints: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Assemble layered agent context from short-term and long-term memory."""
+        history = await self.get_recent_messages(user_id, session_id)
+        preferences = await self.load_preferences(
+            user_id,
+            query=query,
+            top_k=4,
+        )
+        return build_context_bundle(
+            query=query,
+            history=history,
+            preferences=preferences,
+            metadata=metadata or {},
+            agent_names=agent_names,
+            system_constraints=system_constraints,
+        )
 
     # ------------------------------------------------------------------
     # Long-term preference operations
@@ -310,6 +351,7 @@ class MemoryManager:
         if len(messages) < 2:
             logger.debug("Session too short, skipping extraction: %s:%s", user_id, session_id)
             await self.short_term.clear(user_id, session_id)
+            await self.short_term.clear_checkpoint(user_id, session_id)
             return
 
         logger.info(
@@ -360,4 +402,5 @@ class MemoryManager:
 
         # 5. Clear Redis
         await self.short_term.clear(user_id, session_id)
+        await self.short_term.clear_checkpoint(user_id, session_id)
         logger.info("[MEMORY] Short-term memory cleared for %s:%s", user_id, session_id)

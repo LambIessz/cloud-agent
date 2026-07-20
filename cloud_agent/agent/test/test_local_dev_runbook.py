@@ -86,7 +86,7 @@ def test_release_checklist_covers_release_gate_order_and_artifacts():
         "ops/observability_checklist.md",
         ".\\test_all.bat",
         "git diff --check",
-        "rg -n \"sk-[A-Za-z0-9]{20,}\"",
+        "python ops/secret_scan.py",
         ".codex-run/external-readonly-smoke.json",
         ".codex-run/mcp-billing-smoke.json",
         ".codex-run/memory-e2e-smoke.json",

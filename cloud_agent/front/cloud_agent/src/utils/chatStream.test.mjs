@@ -7,6 +7,7 @@ import {
   formatChatErrorMessage,
   streamChat,
 } from './chatStream.js'
+import { SSE_SCHEMA_VERSION } from './sseEvents.js'
 
 function createSseResponse(chunks, init = {}) {
   const encoder = new TextEncoder()
@@ -31,14 +32,33 @@ test('buildChatRequest creates the canonical chat POST request', () => {
   assert.equal(request.endpoint, '/api/chat')
   assert.equal(request.init.method, 'POST')
   assert.deepEqual(request.init.headers, {
+    Accept: 'text/event-stream',
     'Content-Type': 'application/json',
-    'X-User-Id': 'user_1001',
-    'X-Tenant-Id': 'default_tenant',
   })
   assert.deepEqual(JSON.parse(request.init.body), {
     query: 'hello',
-    user_id: 'user_1001',
-    tenant_id: 'default_tenant',
+    session_id: 'session_1',
+  })
+})
+
+test('buildChatRequest includes explicit identity headers when provided', () => {
+  const request = buildChatRequest({
+    query: 'hello',
+    sessionId: 'session_1',
+    userId: 'user_1002',
+    tenantId: 'tenant_a',
+  })
+
+  assert.deepEqual(request.init.headers, {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+    'X-User-Id': 'user_1002',
+    'X-Tenant-Id': 'tenant_a',
+  })
+  assert.deepEqual(JSON.parse(request.init.body), {
+    query: 'hello',
+    user_id: 'user_1002',
+    tenant_id: 'tenant_a',
     session_id: 'session_1',
   })
 })
@@ -53,9 +73,9 @@ test('streamChat parses SSE data lines even when JSON arrives across chunks', as
     fetchImpl: async (...args) => {
       calls.push(args)
       return createSseResponse([
-        'data: {"event_type":"message_delta","content":"he',
+        `data: {"schema_version":"${SSE_SCHEMA_VERSION}","event_type":"message_delta","content":"he`,
         'llo"}\n',
-        'data: {"event_type":"done"}\n',
+        `data: {"schema_version":"${SSE_SCHEMA_VERSION}","event_type":"final","final":"hello"}\n`,
         'data: [DONE]\n',
       ])
     },
@@ -65,8 +85,8 @@ test('streamChat parses SSE data lines even when JSON arrives across chunks', as
   assert.equal(calls.length, 1)
   assert.equal(calls[0][0], '/api/chat')
   assert.deepEqual(payloads, [
-    { event_type: 'message_delta', content: 'hello' },
-    { event_type: 'done' },
+    { schema_version: SSE_SCHEMA_VERSION, event_type: 'message_delta', content: 'hello' },
+    { schema_version: SSE_SCHEMA_VERSION, event_type: 'final', final: 'hello' },
   ])
 })
 
@@ -87,7 +107,7 @@ test('streamChat throws a readable HTTP error for non-OK responses', async () =>
   )
 })
 
-test('formatChatErrorMessage converts aborts and errors to user-facing Chinese copy', () => {
+test('formatChatErrorMessage converts aborts and errors to user-facing copy', () => {
   assert.equal(CHAT_TIMEOUT_MS, 60000)
 
   const timeoutMessage = formatChatErrorMessage(new DOMException('', 'AbortError'))

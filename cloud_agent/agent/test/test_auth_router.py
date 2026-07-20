@@ -351,6 +351,7 @@ def test_chat_endpoint_production_passes_authenticated_identity_only(monkeypatch
     assert captured["authenticated_tenant_id"] == "auth_tenant"
     assert captured["request_id"].startswith("req_")
     assert response.headers["x-request-id"] == captured["request_id"]
+    assert response.headers["x-sse-schema-version"] == "1.0"
     assert "body_user" not in response.text
     assert "auth_user" not in response.text
 
@@ -409,6 +410,7 @@ def test_chat_endpoint_production_jwt_passes_token_identity_only(monkeypatch):
     assert captured["authenticated_user_id"] == "jwt_user"
     assert captured["authenticated_tenant_id"] == "jwt_tenant"
     assert captured["request_id"].startswith("req_")
+    assert response.headers["x-sse-schema-version"] == "1.0"
     assert "jwt_user" not in response.text
     assert "body_user" not in response.text
 
@@ -459,6 +461,7 @@ def test_chat_endpoint_local_mode_keeps_existing_debug_header_behavior(monkeypat
     assert captured["request_tenant_id"] == "body_tenant"
     assert captured["authenticated_user_id"] == "debug_user"
     assert captured["authenticated_tenant_id"] == "debug_tenant"
+    assert response.headers["x-sse-schema-version"] == "1.0"
 
 
 # ──────────────────────────────────────────────

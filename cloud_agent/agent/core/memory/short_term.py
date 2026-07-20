@@ -128,6 +128,44 @@ class ShortTermMemory:
         messages.append({"role": role, "content": content})
         await self.save_messages(user_id, session_id, messages)
 
+    async def get_checkpoint(self, user_id: str, session_id: str) -> dict[str, Any] | None:
+        """Return the pending human checkpoint for the session, if any."""
+        if not self._available:
+            return None
+        try:
+            data = await self._client.get(self._checkpoint_key(user_id, session_id))
+            return json.loads(data) if data else None
+        except Exception as exc:
+            logger.warning("ShortTermMemory.get_checkpoint failed: %s", exc)
+            self._available = False
+            return None
+
+    async def save_checkpoint(self, user_id: str, session_id: str, checkpoint: dict[str, Any]) -> None:
+        """Persist the pending human checkpoint for the session."""
+        if not self._available:
+            return
+        try:
+            await self._client.set(
+                self._checkpoint_key(user_id, session_id),
+                json.dumps(checkpoint, ensure_ascii=False),
+                ex=self._ttl,
+            )
+            logger.debug(
+                "ShortTermMemory: saved checkpoint for %s:%s", user_id, session_id
+            )
+        except Exception as exc:
+            logger.warning("ShortTermMemory.save_checkpoint failed: %s", exc)
+            self._available = False
+
+    async def clear_checkpoint(self, user_id: str, session_id: str) -> None:
+        """Delete the pending human checkpoint for the session."""
+        if not self._available:
+            return
+        try:
+            await self._client.delete(self._checkpoint_key(user_id, session_id))
+        except Exception as exc:
+            logger.warning("ShortTermMemory.clear_checkpoint failed: %s", exc)
+
     async def clear(self, user_id: str, session_id: str) -> None:
         """Delete all messages for a user/session."""
         if not self._available:
@@ -149,6 +187,10 @@ class ShortTermMemory:
     @staticmethod
     def _key(user_id: str, session_id: str) -> str:
         return f"memory:short:{user_id}:{session_id}"
+
+    @staticmethod
+    def _checkpoint_key(user_id: str, session_id: str) -> str:
+        return f"memory:checkpoint:{user_id}:{session_id}"
 
     @staticmethod
     def _trim(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

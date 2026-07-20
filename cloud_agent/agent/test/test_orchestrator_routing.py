@@ -90,6 +90,14 @@ def test_cost_related_queries_prefer_finops_workflow(query):
     assert result["next_agent"] == "billing_agent"
     assert result["metadata"]["primary_intent"] == "finops"
     assert result["metadata"]["is_finops_workflow"] is True
+    collaboration_state = result["metadata"]["collaboration_state"]
+    assert collaboration_state["mode"] == "billing_finops_synthesis"
+    assert collaboration_state["participants"] == [
+        "billing_agent",
+        "finops_agent",
+        "collaboration_agent",
+    ]
+    assert collaboration_state["status"] == "collecting"
 
 
 def test_cost_and_recommendation_records_secondary_intent():
@@ -104,6 +112,15 @@ def test_regular_billing_query_does_not_trigger_finops():
     assert result["next_agent"] == "billing_agent"
     assert result["metadata"]["primary_intent"] == "billing"
     assert result["metadata"]["is_finops_workflow"] is False
+
+
+def test_high_risk_action_routes_to_checkpoint_agent():
+    result = _route("帮我重启 ECS i-bp123")
+
+    assert result["next_agent"] == "checkpoint_agent"
+    assert result["metadata"]["primary_intent"] == "checkpoint"
+    assert result["metadata"]["checkpoint_resume_agent"] == "support_agent"
+    assert result["metadata"]["checkpoint_reason"]
 
 
 def test_route_preserves_existing_request_id():
@@ -302,3 +319,35 @@ def test_graph_routes_to_fallback_and_support_nodes():
     assert fallback_result["metadata"]["request_id"] == "req_graph_test"
     assert support_result["metadata"]["handled_by"] == "support_agent"
     assert support_result["metadata"]["request_id"] == "req_graph_test"
+
+    from core.workflow.graph_manager import AgentGraphManager
+
+    graph = AgentGraphManager().build_graph()
+    assert "checkpoint_agent" in graph.nodes
+
+
+def test_complex_multistep_request_routes_to_planner_agent():
+    result = _route("先帮我查最近买了哪些机器，再分析哪些可以降配")
+
+    assert result["next_agent"] == "planner_agent"
+    assert result["metadata"]["primary_intent"] == "planning"
+    assert result["metadata"]["planner_seed_agent"] == "billing_agent"
+    assert result["metadata"]["planner_mode"] == "plan"
+    assert result["metadata"]["planner_status"] == "planned"
+
+
+def test_explicit_replan_request_routes_to_planner_agent():
+    result = _route(
+        "重新规划一下上面的任务",
+        metadata={
+            "planner_replan_requested": True,
+            "planner_seed_agent": "support_agent",
+            "planner_failure_reason": "上一轮信息不完整",
+        },
+    )
+
+    assert result["next_agent"] == "planner_agent"
+    assert result["metadata"]["primary_intent"] == "planning"
+    assert result["metadata"]["planner_seed_agent"] == "support_agent"
+    assert result["metadata"]["planner_mode"] == "replan"
+    assert result["metadata"]["planner_status"] == "replanned"

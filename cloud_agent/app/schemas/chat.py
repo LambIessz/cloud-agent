@@ -11,14 +11,12 @@ class ChatRequest(BaseModel):
 
     query: str = Field(..., min_length=1, max_length=4000)
     user_id: Optional[str] = Field(
-        default="user_1001",
-        min_length=1,
+        default=None,
         max_length=128,
         pattern=SAFE_IDENTIFIER_PATTERN,
     )
     tenant_id: Optional[str] = Field(
-        default="default_tenant",
-        min_length=1,
+        default=None,
         max_length=128,
         pattern=SAFE_IDENTIFIER_PATTERN,
     )

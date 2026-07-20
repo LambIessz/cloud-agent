@@ -59,6 +59,7 @@ test('loads the Vite app and completes chat through the real FastAPI backend', a
   let assistantText = ''
   let responseStatus = 0
   let responseContentType = ''
+  let responseSchemaVersion = ''
 
   page.on('console', (message) => {
     if (message.type() !== 'error' && message.type() !== 'warning') {
@@ -96,9 +97,11 @@ test('loads the Vite app and completes chat through the real FastAPI backend', a
     requestId = response.headers()['x-request-id'] || ''
     responseStatus = response.status()
     responseContentType = responseHeaders['content-type'] || ''
+    responseSchemaVersion = responseHeaders['x-sse-schema-version'] || ''
 
     expect(requestId).toMatch(/^req_[a-f0-9]{16}$/)
     expect(responseContentType).toContain('text/event-stream')
+    expect(responseSchemaVersion).toBe('1.0')
     await expect(page.locator('.message-row.user')).toContainText(query)
 
     const assistantMessage = page.locator('.message-row.assistant').last()
@@ -138,6 +141,7 @@ test('loads the Vite app and completes chat through the real FastAPI backend', a
       response: {
         status: responseStatus,
         contentType: responseContentType,
+        schemaVersion: responseSchemaVersion,
       },
       readyz,
       requestMetrics,

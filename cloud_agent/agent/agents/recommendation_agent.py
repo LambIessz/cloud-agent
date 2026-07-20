@@ -6,9 +6,10 @@ from core.mcp.mcp_manager import get_global_mcp_tool_registry
 from core.workflow.state import AgentState
 from core.workflow.llm_metrics import LLMCallMetricsCallback
 from typing import Dict, Any
-from agents.billing_agent import UserIdInjector
+from agents.billing_agent import UserIdInjector, get_last_user_message_text
 from tools.vector_tool import query_vector_db
 from core.workflow.request_context import get_request_id
+from core.workflow.context_manager import select_agent_memory_context
 
 class RecommendationAgent:
     """
@@ -33,8 +34,9 @@ class RecommendationAgent:
         )
 
     async def __call__(self, state: AgentState) -> Dict[str, Any]:
-        memory_context = state.get("memory_context", "")
+        memory_context = select_agent_memory_context(state, "recommendation_agent")
         metadata = state.get("metadata", {})
+        query = get_last_user_message_text(state)
         config = {
             "configurable": {
                 "user_id": state.get("user_id", "unknown"),
@@ -59,6 +61,7 @@ class RecommendationAgent:
             "recommendation",
             request_id=get_request_id(metadata),
             user_id_hash=metadata.get("user_id_hash", "unknown"),
+            query=query,
         )
         
         # 组合向量工具与 MCP 工具

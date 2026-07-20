@@ -1,8 +1,8 @@
-import json
 import time
 from typing import Any
 
 from core.workflow.event_log import build_event, emit_event
+from core.workflow.observability_logging import emit_structured_record
 
 
 def now_ms() -> float:
@@ -50,7 +50,7 @@ def build_tool_audit_event(
 
 
 def emit_tool_audit(event: dict[str, Any]) -> None:
-    print(f"[ToolAudit] {json.dumps(event, ensure_ascii=False, sort_keys=True)}")
+    emit_structured_record("ToolAudit", event)
     emit_event(
         build_event(
             event_type=str(event.get("event_type", "tool_call")),

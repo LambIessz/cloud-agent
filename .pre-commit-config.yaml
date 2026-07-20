@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cloud-agent-secret-scan
+        name: cloud-agent secret scan
+        entry: python ops/secret_scan.py
+        language: system
+        pass_filenames: true
+        files: ^(cloud_agent/|deep_research/|ops/|\.github/|README\.md$|API_SWITCH_HANDOFF\.md$|test_all\.bat$|test_all\.sh$)

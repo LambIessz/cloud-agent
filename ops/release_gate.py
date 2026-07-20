@@ -26,6 +26,7 @@ SECRET_NAMES = (
     "MILVUS_API_KEY",
     "OPENWEATHER_API_KEY",
     "CLOUD_AGENT_AUTH_JWT_SECRET",
+    "CLOUD_AGENT_METRICS_TOKEN",
 )
 
 
@@ -302,10 +303,7 @@ def _run_step(
         )
 
     detail_source = output.stdout if output.stdout.strip() else output.stderr
-    if spec.name == "secret_scan" and output.exit_code == 0:
-        detail = "secret pattern matched: " + _truncate(sanitize_text(detail_source, env))
-    else:
-        detail = _truncate(sanitize_text(detail_source or f"exit_code={output.exit_code}", env))
+    detail = _truncate(sanitize_text(detail_source or f"exit_code={output.exit_code}", env))
 
     return StepResult(
         name=spec.name,
@@ -446,21 +444,7 @@ def build_steps(
         ),
         StepSpec(
             name="secret_scan",
-            command=(
-                "rg",
-                "-n",
-                "sk-[A-Za-z0-9]{20,}",
-                "-S",
-                "cloud_agent",
-                "deep_research",
-                "ops",
-                ".github",
-                "README.md",
-                "API_SWITCH_HANDOFF.md",
-                "test_all.bat",
-                "test_all.sh",
-            ),
-            pass_exit_codes=(1,),
+            command=(python, "ops/secret_scan.py"),
             success_detail="no real OpenAI-style secret pattern found",
         ),
     ]

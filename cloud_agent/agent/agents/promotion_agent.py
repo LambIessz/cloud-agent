@@ -3,12 +3,14 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from typing import Dict, Any
+from agents.billing_agent import get_last_user_message_text
 
 from core.mcp.mcp_manager import get_global_mcp_tool_registry
 from core.workflow.state import AgentState
 from core.workflow.llm_metrics import LLMCallMetricsCallback
 from agents.billing_agent import UserIdInjector # 复用安全拦截器，防止越权刷单
 from core.workflow.request_context import get_request_id
+from core.workflow.context_manager import select_agent_memory_context
 
 class PromotionAgentNode:
     """
@@ -37,6 +39,7 @@ class PromotionAgentNode:
 
     async def __call__(self, state: AgentState) -> Dict[str, Any]:
         metadata = state.get("metadata", {})
+        query = get_last_user_message_text(state)
         config = {
             "configurable": {
                 "user_id": state.get("user_id", "unknown"),
@@ -61,9 +64,10 @@ class PromotionAgentNode:
             "promotion",
             request_id=get_request_id(metadata),
             user_id_hash=metadata.get("user_id_hash", "unknown"),
+            query=query,
         )
 
-        memory_context = state.get("memory_context", "")
+        memory_context = select_agent_memory_context(state, "promotion_agent")
         
         system_prompt = f"""你是一个热情的云服务平台【推广营销Agent】。
 你的主要任务是帮助想要分享或推广云产品的用户，提供对应的产品亮点、专属推广链接，并使用 AI 为其生成专属推广海报。

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from typing import Any
 
 from app_config.settings import settings
+
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = os.getenv(
     "CLOUD_AGENT_SEMANTIC_CACHE_COLLECTION",
@@ -23,6 +28,27 @@ METADATA_OUTPUT_FIELDS = [
 ]
 
 
+class _FallbackEmbeddings:
+    def __init__(self, dimension: int = EMBEDDING_DIM) -> None:
+        self._dimension = dimension
+
+    def _embed(self, text: str) -> list[float]:
+        seed = hashlib.sha256(str(text).encode("utf-8", errors="ignore")).digest()
+        base = [
+            int.from_bytes(seed[index : index + 2].ljust(2, b"\0"), "big") / 65535.0
+            for index in range(0, len(seed), 2)
+        ]
+        if not base:
+            base = [0.0]
+        return (base * ((self._dimension // len(base)) + 1))[: self._dimension]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+
 class SemanticCache:
     def __init__(self) -> None:
         self._client: Any = None
@@ -31,13 +57,12 @@ class SemanticCache:
 
     async def initialize(self) -> None:
         if os.getenv("CLOUD_AGENT_SEMANTIC_CACHE_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
-            print("SemanticCache disabled by CLOUD_AGENT_SEMANTIC_CACHE_ENABLED")
+            logger.info("Semantic cache disabled by CLOUD_AGENT_SEMANTIC_CACHE_ENABLED")
             self._available = False
             return
 
         try:
             from pymilvus import MilvusClient
-            from langchain_huggingface import HuggingFaceEmbeddings
 
             cache_db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "agent", "milvus_lite_cache.db")
             connect_kwargs: dict[str, Any] = {
@@ -45,16 +70,25 @@ class SemanticCache:
             }
 
             self._client = MilvusClient(**connect_kwargs)
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name="BAAI/bge-small-zh-v1.5",
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True},
-            )
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+
+                self._embeddings = HuggingFaceEmbeddings(
+                    model_name="BAAI/bge-small-zh-v1.5",
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True},
+                )
+            except Exception as embedding_exc:
+                logger.warning(
+                    "Semantic cache embedding model unavailable (%s); using deterministic fallback embeddings.",
+                    embedding_exc.__class__.__name__,
+                )
+                self._embeddings = _FallbackEmbeddings()
             self._ensure_collection()
             self._client.load_collection(COLLECTION_NAME)
             self._available = True
         except Exception as exc:
-            print(f"SemanticCache init failed: {exc.__class__.__name__}")
+            logger.warning("Semantic cache init failed: %s", exc.__class__.__name__)
             self._available = False
 
     async def set_cache(
@@ -109,7 +143,7 @@ class SemanticCache:
         except Exception as exc:
             if raise_on_error:
                 raise
-            print(f"SemanticCache set_cache failed: {exc.__class__.__name__}")
+            logger.warning("Semantic cache set failed: %s", exc.__class__.__name__)
 
     async def get_cache(self, query: str, user_id: str) -> dict[str, Any] | None:
         if not self._available:
@@ -173,7 +207,7 @@ class SemanticCache:
                 source=entity,
             )
         except Exception as exc:
-            print(f"SemanticCache get_cache failed: {exc.__class__.__name__}")
+            logger.warning("Semantic cache get failed: %s", exc.__class__.__name__)
             return None
 
     @property

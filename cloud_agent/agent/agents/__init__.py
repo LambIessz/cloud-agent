@@ -20,6 +20,8 @@ from .fallback_agent import FallbackAgentNode
 from .promotion_agent import PromotionAgentNode
 from .recommendation_agent import RecommendationAgent
 from .support_agent import SupportAgentNode
+from .checkpoint_agent import CheckpointAgentNode
+from .collaboration_agent import CollaborationSynthesisAgent
 
 __all__ = [
     "OrchestratorAgent",
@@ -29,4 +31,6 @@ __all__ = [
     "PromotionAgentNode",
     "RecommendationAgent",
     "SupportAgentNode",
+    "CheckpointAgentNode",
+    "CollaborationSynthesisAgent",
 ]

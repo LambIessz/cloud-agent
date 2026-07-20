@@ -5,6 +5,7 @@
 """
 
 import logging
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,33 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "long_term_memory"
 EMBEDDING_DIM = 512  
+
+
+class _FallbackEmbeddings:
+    def __init__(self, dimension: int = EMBEDDING_DIM) -> None:
+        self._dimension = dimension
+
+    def _embed(self, text: str) -> list[float]:
+        seed = hashlib.sha256(str(text).encode("utf-8", errors="ignore")).digest()
+        base = [
+            int.from_bytes(seed[index : index + 2].ljust(2, b"\0"), "big") / 65535.0
+            for index in range(0, len(seed), 2)
+        ]
+        if not base:
+            base = [0.0]
+        return (base * ((self._dimension // len(base)) + 1))[: self._dimension]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
 
 
 class LongTermMemory:
@@ -67,7 +95,6 @@ class LongTermMemory:
 
         try:
             from pymilvus import MilvusClient  # type: ignore[import]
-            from langchain_huggingface import HuggingFaceEmbeddings
 
             uri = self._uri or os.getenv("CLOUD_AGENT_LONG_TERM_MEMORY_URI", "").strip()
             if not uri:
@@ -80,11 +107,20 @@ class LongTermMemory:
             connect_kwargs: dict[str, Any] = {"uri": uri}
 
             self._client = MilvusClient(**connect_kwargs)
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name="BAAI/bge-small-zh-v1.5",
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True},
-            )
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+
+                self._embeddings = HuggingFaceEmbeddings(
+                    model_name="BAAI/bge-small-zh-v1.5",
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True},
+                )
+            except Exception as embedding_exc:
+                logger.warning(
+                    "LongTermMemory: embedding model unavailable (%s); using deterministic fallback embeddings.",
+                    embedding_exc.__class__.__name__,
+                )
+                self._embeddings = _FallbackEmbeddings()
             self._ensure_collection()
             self._available = True
             logger.info("LongTermMemory: Milvus connected at %s:%s", self._host, self._port)

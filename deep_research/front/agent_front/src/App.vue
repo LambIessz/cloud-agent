@@ -14,9 +14,9 @@ type ChatMessage = {
   content: string
 }
 
-const userId = ref('user01')
+const userId = ref('')
 const threadId = ref('thread01')
-const tenantId = ref('default_tenant')
+const tenantId = ref('')
 const query = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
@@ -202,14 +202,22 @@ const runResearch = async () => {
   renderStatusText()
   await scrollToBottom()
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const trimmedUserId = userId.value.trim()
+    const trimmedTenantId = tenantId.value.trim()
+    if (trimmedUserId) {
+      headers['X-User-Id'] = trimmedUserId
+    }
+    if (trimmedTenantId) {
+      headers['X-Tenant-Id'] = trimmedTenantId
+    }
+
     const response = await fetch('/api/v1/research/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         query: userText,
-        user_id: userId.value.trim() || 'default_user',
         thread_id: threadId.value.trim() || 'default_thread',
-        tenant_id: tenantId.value.trim() || 'default_tenant',
       }),
     })
     if (!response.ok) {

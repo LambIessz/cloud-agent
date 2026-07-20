@@ -168,9 +168,11 @@ python ops/observability_acceptance.py --run-chat-smoke --grafana-user admin --g
 # Require the latest observability result in the release evidence index
 python ops/release_evidence.py --require-observability --json
 
-# Optional: require a completed 24-hour window only on a continuously running
-# staging or production-like host. It is not a local release blocker.
-python ops/release_evidence.py --require-observability --require-observability-window --json
+# Optional later: require a completed 24-hour window only on a continuously
+# running staging or production-like host. It is not a local release blocker
+# and is not part of the current handoff.
+python ops/release_evidence.py --require-observability --json
+# Add `--require-observability-window` later only after that window has actually completed.
 
 # Grafana: http://127.0.0.1:3000 (admin/admin)
 # Prometheus: http://127.0.0.1:9090

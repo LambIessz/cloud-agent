@@ -665,6 +665,8 @@ class TestCrossAgentIntegration:
         nodes = list(graph.nodes.keys())
         expected_nodes = [
             "orchestrator",
+            "planner_agent",
+            "collaboration_agent",
             "product_agent",
             "billing_agent",
             "finops_agent",

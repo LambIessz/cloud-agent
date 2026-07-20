@@ -5,9 +5,10 @@ from langgraph.prebuilt import create_react_agent
 from typing import Dict, Any
 
 from core.mcp.mcp_manager import get_global_mcp_tool_registry
+from core.workflow.collaboration_state import append_collaboration_finding, has_collaboration_state
 from core.workflow.state import AgentState
 from core.workflow.llm_metrics import LLMCallMetricsCallback
-from agents.billing_agent import UserIdInjector
+from agents.billing_agent import UserIdInjector, get_last_user_message_text
 from core.workflow.request_context import get_request_id
 from core.workflow.finops_validator import extract_finops_facts, validate_finops_response
 
@@ -37,7 +38,7 @@ class FinOpsAgentNode:
         pass
 
     async def __call__(self, state: AgentState) -> Dict[str, Any]:
-        metadata = state.get("metadata", {})
+        metadata = dict(state.get("metadata", {}))
         config = {
             "configurable": {
                 "user_id": state.get("user_id", "unknown"),
@@ -58,10 +59,12 @@ class FinOpsAgentNode:
             ],
         }
 
+        query = get_last_user_message_text(state)
         tools = await self.tool_registry.get_tools_for_agent(
             "finops",
             request_id=get_request_id(metadata),
             user_id_hash=metadata.get("user_id_hash", "unknown"),
+            query=query,
         )
         
         system_prompt = f"""你是一个专业的云上【FinOps成本优化专家】。
@@ -104,6 +107,16 @@ class FinOpsAgentNode:
             print(
                 f"[FinOpsValidator] request_id={get_request_id(metadata)} "
                 f"issues={','.join(validation_issues)}"
+            )
+        metadata["handled_by"] = "finops_agent"
+        if has_collaboration_state(metadata):
+            metadata = append_collaboration_finding(
+                metadata,
+                agent_name="finops_agent",
+                summary=str(getattr(final_message, "content", "")),
+                stage="finops",
+                status="success" if not validation_issues else "degraded",
+                notes=validation_issues or None,
             )
         
         # 执行完毕后，把 next_agent 清空，代表流程彻底结束

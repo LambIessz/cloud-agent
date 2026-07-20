@@ -131,6 +131,7 @@ def test_registry_discovers_tools_once_and_applies_allowlists(tmp_path):
 
     billing_tools = asyncio.run(registry.get_tools_for_agent("billing"))
     finops_tools = asyncio.run(registry.get_tools_for_agent("finops"))
+    support_tools = asyncio.run(registry.get_tools_for_agent("support"))
     promotion_tools = asyncio.run(registry.get_tools_for_agent("promotion"))
     recommendation_tools = asyncio.run(registry.get_tools_for_agent("recommendation"))
 
@@ -139,6 +140,7 @@ def test_registry_discovers_tools_once_and_applies_allowlists(tmp_path):
     assert _FakeClient.init_kwargs[0]["tool_interceptors"] == [interceptor]
     assert _names(billing_tools) == ["query_user_orders", "query_user_instances"]
     assert _names(finops_tools) == ["query_user_instances", "analyze_instance_usage"]
+    assert _names(support_tools) == ["query_user_instances", "analyze_instance_usage"]
     assert _names(promotion_tools) == [
         "get_promotable_products",
         "search_product_catalog",
@@ -150,6 +152,79 @@ def test_registry_discovers_tools_once_and_applies_allowlists(tmp_path):
         "search_product_catalog",
         "get_promotion_materials",
     ]
+
+
+def test_registry_ranks_tool_candidates_by_query(tmp_path):
+    _FakeClient.init_count = 0
+    _FakeClient.get_tools_count = 0
+    _FakeClient.init_kwargs = []
+    registry = MCPToolRegistry(
+        _write_config(tmp_path),
+        client_factory=_FakeClient,
+    )
+
+    billing_tools = asyncio.run(
+        registry.get_tools_for_agent("billing", query="帮我查一下我的账单明细")
+    )
+    support_tools = asyncio.run(
+        registry.get_tools_for_agent("support", query="我的 ECS i-bp123 无法 SSH 连接")
+    )
+    promotion_tools = asyncio.run(
+        registry.get_tools_for_agent("promotion", query="帮我为 ECS 生成推广海报")
+    )
+    recommendation_tools = asyncio.run(
+        registry.get_tools_for_agent("recommendation", query="Java + MySQL 的高并发业务应该选哪种 ECS")
+    )
+
+    assert _names(billing_tools) == ["query_user_orders"]
+    assert _names(support_tools) == [
+        "query_user_instances",
+        "analyze_instance_usage",
+    ]
+    assert "get_promotion_materials" in _names(promotion_tools)
+    assert "generate_ai_poster" in _names(promotion_tools)
+    assert "search_product_catalog" in _names(recommendation_tools)
+    assert "query_user_orders" not in _names(recommendation_tools)
+
+
+def test_registry_emits_tool_selection_event_for_ranked_query(tmp_path, capsys):
+    registry = MCPToolRegistry(
+        _write_config(tmp_path),
+        client_factory=_FakeClient,
+    )
+
+    tools = asyncio.run(
+        registry.get_tools_for_agent(
+            "promotion",
+            request_id="req_tool_select",
+            user_id_hash="hash_tool_select",
+            query="帮我为 ECS 生成推广海报",
+        )
+    )
+
+    output = capsys.readouterr().out
+    events = _event_log_events(output)
+    selection_events = [event for event in events if event["event_type"] == "mcp_tool_selection"]
+
+    assert _names(tools)
+    assert len(selection_events) == 1
+    assert selection_events[0]["request_id"] == "req_tool_select"
+    assert selection_events[0]["user_id_hash"] == "hash_tool_select"
+    assert selection_events[0]["component"] == "mcp"
+    assert selection_events[0]["operation"] == "tool_selection"
+    assert selection_events[0]["selected_count"] >= 1
+    assert selection_events[0]["candidate_count"] >= selection_events[0]["selected_count"]
+    assert "query" not in selection_events[0]
+
+
+def test_registry_exposes_tool_metadata_tags():
+    registry = MCPToolRegistry("cloud_agent/agent/config/mcp_servers.json")
+
+    metadata = registry.get_tool_metadata("analyze_instance_usage")
+
+    assert "finops" in metadata["capabilities"]
+    assert "requires_instance_id" in metadata["constraints"]
+    assert "降本" in metadata["use_cases"]
 
 
 def test_registry_resolves_relative_server_cwd_from_cloud_agent_root():
@@ -241,7 +316,7 @@ def test_registry_rejects_unknown_agent_allowlist(tmp_path):
     )
 
     with pytest.raises(KeyError):
-        asyncio.run(registry.get_tools_for_agent("support"))
+        asyncio.run(registry.get_tools_for_agent("research"))
 
 
 def test_registry_initializes_once_for_concurrent_first_requests(tmp_path):

@@ -71,6 +71,9 @@ curl http://127.0.0.1:5000/readyz
 curl http://127.0.0.1:5000/api/metrics
 ```
 
+If `CLOUD_AGENT_METRICS_TOKEN` is set, include `Authorization: Bearer <token>`
+or `X-Metrics-Token: <token>` when checking `/api/metrics`.
+
 ## 3. Deployment Doctor Gate
 
 Run the deployment doctor against the running backend:
@@ -295,11 +298,12 @@ python ops/observability_window.py --status --output-dir <output_dir_from_latest
 Review the final `summary.json`: `ready` requires every scheduled sample to be
 healthy with zero firing alerts; `degraded` keeps safe aggregate failure counts.
 
-Do not use this as a local release blocker. After the optional 24-hour window
-has completed on the stable host, require it in the release evidence:
+Do not use this as a local release blocker. For the current handoff, only the
+targeted acceptance is required in the release evidence. After the optional
+24-hour window has completed on the stable host, add it too:
 
 ```powershell
-python ops/release_evidence.py --require-observability --require-observability-window --json
+python ops/release_evidence.py --require-observability --json
 ```
 
 The scheduled CI `observability-stack-smoke` validates the same Compose
@@ -335,7 +339,7 @@ Run hygiene checks:
 
 ```powershell
 git diff --check
-rg -n "sk-[A-Za-z0-9]{20,}" -S cloud_agent deep_research ops .github README.md test_all.bat test_all.sh
+python ops/secret_scan.py
 ```
 
 Expected result:
@@ -360,6 +364,8 @@ python ops/release_evidence.py --json
 
 Use `--require-observability` when the observability gate is part of the
 release candidate, as shown in section 10.
+Use `--require-observability-window` only after the optional long-running
+window has actually completed on a continuously running host.
 
 The index writes:
 

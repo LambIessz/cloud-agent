@@ -1216,6 +1216,40 @@ def test_api_metrics_route_returns_prometheus_text():
     assert "hash_metrics_route" not in response.text
 
 
+def test_api_metrics_route_requires_token_when_configured(monkeypatch):
+    monkeypatch.setenv("CLOUD_AGENT_METRICS_TOKEN", "metrics-secret")
+    emit_event(
+        build_event(
+            event_type="cache_lookup",
+            request_id="req_metrics_auth",
+            user_id_hash="hash_metrics_auth",
+            component="semantic_cache",
+            operation="get_cache",
+            status="hit",
+        )
+    )
+    app = FastAPI()
+    app.include_router(metrics_router, prefix="/api")
+    client = TestClient(app)
+
+    denied = client.get("/api/metrics")
+    bearer = client.get(
+        "/api/metrics",
+        headers={"Authorization": "Bearer metrics-secret"},
+    )
+    header = client.get(
+        "/api/metrics",
+        headers={"X-Metrics-Token": "metrics-secret"},
+    )
+
+    assert denied.status_code == 401
+    assert denied.json()["detail"] == "metrics_auth_required"
+    assert bearer.status_code == 200
+    assert header.status_code == 200
+    assert "metrics-secret" not in bearer.text
+    assert "metrics-secret" not in header.text
+
+
 def test_api_metrics_route_returns_complete_observability_metrics(capsys):
     emit_event(
         build_event(

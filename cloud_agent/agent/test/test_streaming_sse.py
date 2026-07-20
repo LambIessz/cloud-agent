@@ -47,7 +47,11 @@ class _StreamingGraph:
         from langchain_core.messages import AIMessage
 
         self.astream_events_called = True
-        yield {"event": "on_chain_start", "name": "orchestrator", "data": {}}
+        yield {
+            "event": "on_chain_start",
+            "name": "orchestrator",
+            "data": {"output": {"next_agent": "billing_agent"}},
+        }
         await asyncio.sleep(0)
         yield {
             "event": "on_chat_model_stream",
@@ -111,13 +115,16 @@ def test_stream_chat_uses_native_graph_events_for_sse():
     assert graph.ainvoke_called is False
     assert [payload["event_type"] for payload in payloads] == [
         "stream_start",
-        "agent_step",
+        "route_decision",
         "message_delta",
         "message_delta",
+        "final",
         "done",
     ]
+    assert all(payload["schema_version"] == chat_service.SSE_SCHEMA_VERSION for payload in payloads)
     assert payloads[0]["stream_mode"] == "native"
     assert payloads[1]["step"] == "orchestrator"
+    assert payloads[1]["route_to"] == "billing_agent"
     assert "".join(payload["content"] for payload in payloads if "content" in payload) == "hello"
     assert payloads[-1]["request_id"] == "req_native_stream"
 
@@ -145,9 +152,55 @@ def test_stream_chat_keeps_fallback_for_non_streaming_graphs():
     assert graph.ainvoke_called is True
     assert payloads[0]["event_type"] == "stream_start"
     assert payloads[0]["stream_mode"] == "fallback"
+    assert all(payload["schema_version"] == chat_service.SSE_SCHEMA_VERSION for payload in payloads)
     assert "fallback ok" in "".join(payload.get("content", "") for payload in payloads)
     assert payloads[-1]["event_type"] == "done"
     assert payloads[-1]["request_id"] == "req_fallback_stream"
+
+
+def test_stream_chat_cache_hit_preserves_sse_contract():
+    class _Cache:
+        available = True
+
+        async def get_cache(self, *_args, **_kwargs):
+            return {
+                "answer": "cached reply",
+                "level": "L1_EXACT",
+                "distance": 0.0,
+            }
+
+    async def _run():
+        graph = _StreamingGraph()
+        chat_service.semantic_cache = _Cache()
+        chat_service.memory = _Memory()
+        chat_service.graph = graph
+
+        chunks = []
+        async for chunk in chat_service.stream_chat(
+            "query",
+            "plain_user",
+            "session_1",
+            request_id="req_cache_stream",
+            request_tenant_id="tenant_a",
+        ):
+            chunks.append(chunk)
+        return graph, _payloads(chunks)
+
+    graph, payloads = asyncio.run(_run())
+
+    assert graph.astream_events_called is False
+    assert [payload["event_type"] for payload in payloads] == [
+        "stream_start",
+        "route_decision",
+        "message_delta",
+        "final",
+        "done",
+    ]
+    assert all(payload["schema_version"] == chat_service.SSE_SCHEMA_VERSION for payload in payloads)
+    assert payloads[0]["stream_mode"] == "cache"
+    assert payloads[1]["route_to"] == "semantic_cache"
+    assert "".join(payload.get("content", "") for payload in payloads) == "cached reply"
+    assert payloads[-1]["request_id"] == "req_cache_stream"
 
 
 def test_init_agent_system_can_use_smoke_fake_graph(monkeypatch):
@@ -190,12 +243,14 @@ def test_init_agent_system_can_use_smoke_fake_graph(monkeypatch):
     assert memory.long_term.available is False
     assert [payload["event_type"] for payload in payloads] == [
         "stream_start",
-        "agent_step",
+        "route_decision",
         "agent_step",
         "message_delta",
         "message_delta",
+        "final",
         "done",
     ]
+    assert all(payload["schema_version"] == chat_service.SSE_SCHEMA_VERSION for payload in payloads)
     assert "".join(payload.get("content", "") for payload in payloads) == (
         "real backend smoke reply: smoke query"
     )

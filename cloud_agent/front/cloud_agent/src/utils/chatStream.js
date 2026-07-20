@@ -1,7 +1,46 @@
 export const DEFAULT_CHAT_ENDPOINT = '/api/chat'
-export const DEFAULT_USER_ID = 'user_1001'
-export const DEFAULT_TENANT_ID = 'default_tenant'
+export const DEFAULT_USER_ID = ''
+export const DEFAULT_TENANT_ID = ''
 export const CHAT_TIMEOUT_MS = 60000
+
+function normalizeIdentityValue(value) {
+  const trimmed = String(value ?? '').trim()
+  return trimmed || ''
+}
+
+function buildChatPayload({ query, sessionId, userId, tenantId }) {
+  const payload = {
+    query,
+    session_id: sessionId,
+  }
+
+  const normalizedUserId = normalizeIdentityValue(userId)
+  const normalizedTenantId = normalizeIdentityValue(tenantId)
+  if (normalizedUserId) {
+    payload.user_id = normalizedUserId
+  }
+  if (normalizedTenantId) {
+    payload.tenant_id = normalizedTenantId
+  }
+  return payload
+}
+
+function buildChatHeaders(userId, tenantId) {
+  const headers = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  }
+
+  const normalizedUserId = normalizeIdentityValue(userId)
+  const normalizedTenantId = normalizeIdentityValue(tenantId)
+  if (normalizedUserId) {
+    headers['X-User-Id'] = normalizedUserId
+  }
+  if (normalizedTenantId) {
+    headers['X-Tenant-Id'] = normalizedTenantId
+  }
+  return headers
+}
 
 export function buildChatRequest({
   query,
@@ -16,17 +55,15 @@ export function buildChatRequest({
     init: {
       method: 'POST',
       signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-        'X-Tenant-Id': tenantId,
-      },
-      body: JSON.stringify({
-        query,
-        user_id: userId,
-        tenant_id: tenantId,
-        session_id: sessionId,
-      }),
+      headers: buildChatHeaders(userId, tenantId),
+      body: JSON.stringify(
+        buildChatPayload({
+          query,
+          sessionId,
+          userId,
+          tenantId,
+        }),
+      ),
     },
   }
 }
@@ -86,10 +123,10 @@ export async function streamChat({
 
 export function formatChatErrorMessage(error, timeoutMs = CHAT_TIMEOUT_MS) {
   const detail = error instanceof DOMException && error.name === 'AbortError'
-    ? `请求超时：${timeoutMs / 1000} 秒内没有收到后端响应`
+    ? `请求超时：${Math.round(timeoutMs / 1000)} 秒内没有收到后端响应`
     : error instanceof Error ? error.message : String(error)
 
-  return `❌ 请求失败：${detail}\n\n请检查后端 /readyz、Nginx /api/ 反向代理和 Docker 容器日志。`
+  return `请求失败：${detail}\n\n请检查后端 /readyz、Nginx /api/ 反向代理和 Docker 容器日志。`
 }
 
 function parseSseBuffer(buffer, onPayload) {

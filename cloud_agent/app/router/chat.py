@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import StreamingResponse
 from schemas.chat import ChatRequest
+from security import REQUEST_BUDGET
 from security.auth import resolve_authenticated_identity_from_request
-from service.chat_service import stream_chat
+from service.chat_service import SSE_SCHEMA_VERSION, stream_chat
 from uuid import uuid4
 
 router = APIRouter()
@@ -25,19 +26,35 @@ async def chat_endpoint(
         debug_tenant_id=x_tenant_id,
     )
     request_id = f"req_{uuid4().hex[:16]}"
+
+    client_host = request.client.host if request.client and request.client.host else "unknown"
+    request_key_parts = [
+        authenticated_identity.user_id,
+        authenticated_identity.tenant_id,
+        chat_request.session_id,
+        client_host,
+    ]
+    request_key = ":".join(part for part in request_key_parts if part)
+
+    async def guarded_stream():
+        async with REQUEST_BUDGET.slot(request_key):
+            async for chunk in stream_chat(
+                chat_request.query,
+                chat_request.user_id,
+                chat_request.session_id,
+                request_id=request_id,
+                request_tenant_id=chat_request.tenant_id,
+                authenticated_user_id=authenticated_identity.user_id,
+                authenticated_tenant_id=authenticated_identity.tenant_id,
+            ):
+                yield chunk
+
     return StreamingResponse(
-        stream_chat(
-            chat_request.query,
-            chat_request.user_id,
-            chat_request.session_id,
-            request_id=request_id,
-            request_tenant_id=chat_request.tenant_id,
-            authenticated_user_id=authenticated_identity.user_id,
-            authenticated_tenant_id=authenticated_identity.tenant_id,
-        ),
+        guarded_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Request-Id": request_id,
+            "X-SSE-Schema-Version": SSE_SCHEMA_VERSION,
         },
     )

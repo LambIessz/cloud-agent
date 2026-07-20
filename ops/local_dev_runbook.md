@@ -317,6 +317,9 @@ proxy through:
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/api/metrics
 ```
 
+If `CLOUD_AGENT_METRICS_TOKEN` is set, add `Authorization: Bearer <token>`
+or `X-Metrics-Token: <token>` to the request.
+
 If this fails, restart `npm run dev` or run the local smoke with a temporary
 frontend port.
 
@@ -352,11 +355,14 @@ Then run hygiene checks:
 
 ```powershell
 git diff --check
-rg -n "sk-[A-Za-z0-9]{20,}" -S cloud_agent deep_research ops .github README.md test_all.bat test_all.sh
+python ops/secret_scan.py
 ```
 
 `git diff --check` may show CRLF warnings. The secret scan should not find real
 keys; test files may contain forbidden-value assertions.
+
+If you do install `pre-commit`, run `pre-commit install` once in the repo and
+keep using the Python scan as the canonical fallback.
 
 For release candidates, run the full gate order in:
 
@@ -445,12 +451,16 @@ At the end of the window, `summary.json` is `ready` only when every sample was
 healthy and no alert fired. A `degraded` result preserves the aggregate failure
 counts for investigation without persisting Prometheus labels or business data.
 
-Only after that optional window completes on the stable host, bind it to the
+Only after that optional window completes on the stable host, add it to the
 release evidence gate:
 
 ```powershell
-python ops/release_evidence.py --require-observability --require-observability-window --json
+python ops/release_evidence.py --require-observability --json
 ```
+
+For the current handoff, `--require-observability` alone is enough.
+Use `--require-observability-window` only when that optional 24-hour window has
+actually completed on a continuously running host.
 
 The scheduled `cloud-agent-browser-smoke` workflow also runs an
 `observability-stack-smoke` job with a fake graph backend, Prometheus, Grafana,

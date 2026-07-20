@@ -126,8 +126,27 @@ def merge_env(env_file: Path | None, process_env: dict[str, str] | None = None) 
     return merged
 
 
-def fetch_url(url: str, timeout: float = 5.0):
-    request = Request(url, headers={"Accept": "application/json,text/plain,*/*"})
+def _resolve_secret_value(env: dict[str, str], name: str) -> str | None:
+    direct = env.get(name, "").strip()
+    if direct:
+        return direct
+
+    secret_file = env.get(f"{name}_FILE", "").strip()
+    if not secret_file:
+        return None
+
+    try:
+        value = Path(secret_file).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def fetch_url(url: str, timeout: float = 5.0, headers: dict[str, str] | None = None):
+    request_headers = {"Accept": "application/json,text/plain,*/*"}
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, headers=request_headers)
     try:
         with urlopen(request, timeout=timeout) as response:
             body = response.read(512_000).decode("utf-8", errors="replace")
@@ -442,7 +461,14 @@ def build_report(
     timeout: float = 5.0,
 ) -> DoctorReport:
     env = dict(os.environ if env is None else env)
-    fetch = fetch or (lambda url: fetch_url(url, timeout=timeout))
+    if fetch is None:
+        def fetch(url: str):
+            headers = None
+            if url.endswith("/api/metrics"):
+                metrics_token = _resolve_secret_value(env, "CLOUD_AGENT_METRICS_TOKEN")
+                if metrics_token:
+                    headers = {"Authorization": f"Bearer {metrics_token}"}
+            return fetch_url(url, timeout=timeout, headers=headers)
     connect = can_connect or globals()["can_connect"]
     mcp_config_path = mcp_config_path or (
         _repo_root() / "cloud_agent" / "agent" / "config" / "mcp_servers.json"

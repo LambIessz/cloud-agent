@@ -1,7 +1,9 @@
 import asyncio
 import json
-import sys
+import logging
 import os
+import sys
+from typing import Any
 
 # 初始化 Agent 和 Graph
 AGENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "agent")
@@ -19,12 +21,17 @@ from core.workflow.event_log import build_event, elapsed_ms, emit_event, now_ms
 from core.workflow.metrics import estimate_llm_cost_usd, normalize_model_label
 from core.workflow.request_context import ensure_request_metadata, get_request_id
 from core.workflow.tracing import start_stream_chat_span
+from core.workflow.context_manager import build_context_bundle
 from core.mcp.mcp_manager import (
     close_global_mcp_tool_registry,
     get_global_mcp_tool_registry,
 )
 from core.memory.memory_manager import MemoryManager
 from infra.cache import semantic_cache
+
+
+logger = logging.getLogger(__name__)
+SSE_SCHEMA_VERSION = "1.0"
 
 # Global variables for graph and memory
 graph = None
@@ -118,12 +125,12 @@ def _print_degradation_summary() -> None:
         pass
 
     if not checks:
-        print("📊 Degradation 摘要: 全部依赖可用 ✅")
+        logger.info("Degradation summary: all dependencies available")
         return
 
     status = " ".join(f"{name}:unavailable" for name, _ in checks)
-    print(f"📊 Degradation 摘要: {len(checks)} 个组件不可用 — {status}")
-    print("   降级不影响 /healthz /readyz fallback LLM 路由和 metrics 指标采集")
+    logger.warning("Degradation summary: %s components unavailable - %s", len(checks), status)
+    logger.warning("Degraded mode still preserves /healthz, /readyz, fallback routing, and metrics collection")
 
 
 def _mapping_or_empty(value):
@@ -131,7 +138,9 @@ def _mapping_or_empty(value):
 
 
 def _sse_data(payload: dict) -> str:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    frame = dict(payload)
+    frame.setdefault("schema_version", SSE_SCHEMA_VERSION)
+    return f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
 
 
 def _message_content(message) -> str:
@@ -173,6 +182,42 @@ def _graph_event_step_name(event: dict) -> str | None:
     return str(name) if name else None
 
 
+def _graph_event_tool_name(event: dict) -> str | None:
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_tool_start", "on_tool_end"}:
+        return None
+    metadata = _mapping_or_empty(event.get("metadata"))
+    name = event.get("name") or metadata.get("langgraph_node")
+    return str(name) if name else None
+
+
+def _graph_event_route_result(event: dict) -> dict[str, str] | None:
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_chain_start", "on_chain_end", "on_graph_end"}:
+        return None
+    metadata = _mapping_or_empty(event.get("metadata"))
+    node_name = str(event.get("name") or metadata.get("langgraph_node") or "")
+    if node_name != "orchestrator":
+        return None
+    data = _mapping_or_empty(event.get("data"))
+    output = data.get("output")
+    if not isinstance(output, dict):
+        return {"step": node_name}
+    next_agent = output.get("next_agent") or output.get("route_to")
+    route_reason = ""
+    output_metadata = _mapping_or_empty(output.get("metadata"))
+    if output_metadata.get("route_reason"):
+        route_reason = str(output_metadata.get("route_reason"))
+    elif output.get("route_reason"):
+        route_reason = str(output.get("route_reason"))
+    result: dict[str, str] = {"step": node_name}
+    if next_agent:
+        result["route_to"] = str(next_agent)
+    if route_reason:
+        result["route_reason"] = route_reason
+    return result
+
+
 def _graph_event_delta(event: dict) -> str:
     event_name = _graph_event_name(event)
     if event_name not in {"on_chat_model_stream", "on_llm_stream"}:
@@ -190,6 +235,15 @@ def _graph_event_final_message(event: dict):
         return None
     data = _mapping_or_empty(event.get("data"))
     return _last_message_from_output(data.get("output"))
+
+
+def _graph_event_final_output(event: dict) -> dict | None:
+    event_name = _graph_event_name(event)
+    if event_name not in {"on_chain_end", "on_graph_end"}:
+        return None
+    data = _mapping_or_empty(event.get("data"))
+    output = data.get("output")
+    return output if isinstance(output, dict) else None
 
 
 async def _iter_graph_events(state: dict, config: dict):
@@ -588,18 +642,18 @@ async def init_agent_system():
     global graph, memory
     if graph is None:
         if _env_flag("CLOUD_AGENT_SMOKE_FAKE_GRAPH"):
-            print("Initializing browser smoke fake graph...")
+            logger.info("Initializing browser smoke fake graph")
             graph = _SmokeGraph()
             memory = _SmokeMemory()
             await semantic_cache.initialize()
             _print_degradation_summary()
-            print("Browser smoke fake graph initialized.")
+            logger.info("Browser smoke fake graph initialized")
             return
-        print("🚀 初始化 Multi-Agent 图编排...")
+        logger.info("Initializing Multi-Agent graph orchestration")
         graph_manager = AgentGraphManager()
         graph = graph_manager.build_graph()
-        
-        print("🧠 初始化 Memory 系统...")
+
+        logger.info("Initializing memory system")
         from config import get_settings
         settings = get_settings()
         memory = MemoryManager(
@@ -612,12 +666,12 @@ async def init_agent_system():
         await memory.initialize()
         await semantic_cache.initialize()
         if _env_flag("CLOUD_AGENT_MCP_PRELOAD"):
-            print("🔌 预热 MCP 工具注册表...")
+            logger.info("Preloading MCP tool registry")
             registry = get_global_mcp_tool_registry()
             tool_names = await registry.get_tool_names_for_agent("billing")
-            print(f"✅ MCP 工具注册表预热完成，billing tools={','.join(tool_names)}")
+            logger.info("MCP tool registry preloaded: billing_tools=%s", ",".join(tool_names))
         _print_degradation_summary()
-        print("✅ Agent 系统初始化完成！")
+        logger.info("Agent system initialization complete")
 
 
 async def shutdown_agent_system():
@@ -628,7 +682,7 @@ async def shutdown_agent_system():
         await asyncio.gather(*list(_background_extract_tasks), return_exceptions=True)
         _background_extract_tasks.clear()
     await close_global_mcp_tool_registry()
-    print("✅ Agent 系统资源清理完成！")
+    logger.info("Agent system resources cleaned up")
 
 async def _extract_memory_context(
     user_id: str,
@@ -752,9 +806,234 @@ async def _extract_memory_context(
                 
     return "\n".join(context_parts)
 
+
+async def _build_context_bundle(
+    user_id: str,
+    session_id: str,
+    query: str,
+    *,
+    request_id: str = "unknown",
+    user_id_hash: str = "unknown",
+    tenant_id: str = "unknown",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    history: list[dict[str, Any]] = []
+    preferences: list[str] = []
+    if memory and memory.short_term.available:
+        try:
+            history = await memory.short_term.get_messages(user_id, session_id)
+            _emit_memory_retrieve_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="redis",
+                operation="short_memory_get",
+                status="success",
+                retrieved_count=len(history or []),
+            )
+        except Exception as exc:
+            _emit_memory_retrieve_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="redis",
+                operation="short_memory_get",
+                status="degraded",
+                error_type=exc.__class__.__name__,
+            )
+            emit_degradation(
+                build_degradation_event(
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    component="redis",
+                    operation="short_memory_get",
+                    error_type=exc.__class__.__name__,
+                )
+            )
+    else:
+        _emit_memory_retrieve_event(
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            tenant_id=tenant_id,
+            component="redis",
+            operation="short_memory_get",
+            status="unavailable",
+        )
+        emit_degradation(
+            build_degradation_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                component="redis",
+                operation="short_memory_get",
+                status="unavailable",
+            )
+        )
+
+    if memory and memory.long_term.available:
+        try:
+            preferences = await memory.long_term.retrieve_relevant(user_id, query)
+            _emit_memory_retrieve_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="milvus",
+                operation="long_memory_retrieve",
+                status="success",
+                retrieved_count=len(preferences or []),
+            )
+        except Exception as exc:
+            _emit_memory_retrieve_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="milvus",
+                operation="long_memory_retrieve",
+                status="degraded",
+                error_type=exc.__class__.__name__,
+            )
+            emit_degradation(
+                build_degradation_event(
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    component="milvus",
+                    operation="long_memory_retrieve",
+                    error_type=exc.__class__.__name__,
+                )
+            )
+    else:
+        _emit_memory_retrieve_event(
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            tenant_id=tenant_id,
+            component="milvus",
+            operation="long_memory_retrieve",
+            status="unavailable",
+        )
+        emit_degradation(
+            build_degradation_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                component="milvus",
+                operation="long_memory_retrieve",
+                status="unavailable",
+            )
+        )
+
+    return build_context_bundle(
+        query=query,
+        history=history,
+        preferences=preferences,
+        metadata=metadata or {},
+    )
+
+
+async def _load_session_checkpoint(
+    user_id: str,
+    session_id: str,
+    *,
+    request_id: str,
+    user_id_hash: str,
+    tenant_id: str,
+) -> dict | None:
+    if memory is None:
+        return None
+
+    try:
+        loader = getattr(memory, "get_session_checkpoint", None)
+        if callable(loader):
+            checkpoint = await loader(user_id, session_id)
+            return checkpoint if isinstance(checkpoint, dict) else None
+
+        short_term = getattr(memory, "short_term", None)
+        loader = getattr(short_term, "get_checkpoint", None)
+        if callable(loader):
+            checkpoint = await loader(user_id, session_id)
+            return checkpoint if isinstance(checkpoint, dict) else None
+    except Exception as exc:
+        emit_degradation(
+            build_degradation_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="redis",
+                operation="checkpoint_get",
+                error_type=exc.__class__.__name__,
+            )
+        )
+    return None
+
+
+async def _save_session_checkpoint(
+    user_id: str,
+    session_id: str,
+    checkpoint: dict | None,
+    *,
+    request_id: str,
+    user_id_hash: str,
+    tenant_id: str,
+) -> None:
+    if memory is None or not isinstance(checkpoint, dict):
+        return
+
+    try:
+        saver = getattr(memory, "save_session_checkpoint", None)
+        if callable(saver):
+            await saver(user_id, session_id, checkpoint)
+            return
+
+        short_term = getattr(memory, "short_term", None)
+        saver = getattr(short_term, "save_checkpoint", None)
+        if callable(saver):
+            await saver(user_id, session_id, checkpoint)
+    except Exception as exc:
+        emit_degradation(
+            build_degradation_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="redis",
+                operation="checkpoint_save",
+                error_type=exc.__class__.__name__,
+            )
+        )
+
+
+async def _clear_session_checkpoint(
+    user_id: str,
+    session_id: str,
+    *,
+    request_id: str,
+    user_id_hash: str,
+    tenant_id: str,
+) -> None:
+    if memory is None:
+        return
+
+    try:
+        clearer = getattr(memory, "clear_session_checkpoint", None)
+        if callable(clearer):
+            await clearer(user_id, session_id)
+            return
+
+        short_term = getattr(memory, "short_term", None)
+        clearer = getattr(short_term, "clear_checkpoint", None)
+        if callable(clearer):
+            await clearer(user_id, session_id)
+    except Exception as exc:
+        emit_degradation(
+            build_degradation_event(
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                tenant_id=tenant_id,
+                component="redis",
+                operation="checkpoint_clear",
+                error_type=exc.__class__.__name__,
+            )
+        )
+
 async def stream_chat(
     query: str,
-    user_id: str,
+    user_id: str | None,
     session_id: str,
     request_id: str | None = None,
     request_tenant_id: str | None = None,
@@ -787,8 +1066,25 @@ async def stream_chat(
                     operation="stream_chat",
                 )
             )
+            checkpoint = await _load_session_checkpoint(
+                identity.user_id,
+                scoped_session,
+                request_id=request_id,
+                user_id_hash=identity.user_id_hash,
+                tenant_id=identity.tenant_id,
+            )
+            if checkpoint:
+                metadata["human_checkpoint"] = checkpoint
+                trace_span.set_attribute("checkpoint.status", str(checkpoint.get("status") or "pending"))
+                logger.info(
+                    "Chat service request_id=%s checkpoint pending; bypassing cache",
+                    request_id,
+                )
+            else:
+                metadata.pop("human_checkpoint", None)
+            checkpoint_pending = False
             cache_hit = None
-            if getattr(semantic_cache, "available", False):
+            if not checkpoint and getattr(semantic_cache, "available", False):
                 try:
                     cache_hit = await semantic_cache.get_cache(query, identity.user_id)
                 except Exception as exc:
@@ -850,11 +1146,14 @@ async def stream_chat(
                     estimated_saved_cost_usd=cache_hit.get("estimated_cost_usd"),
                 )
                 response_text = cache_hit["answer"]
-                print(
-                    f"[ChatService] request_id={request_id} semantic_cache_hit level={cache_hit['level']} "
-                    f"distance={cache_hit['distance']:.4f}"
+                logger.info(
+                    "Chat service request_id=%s semantic cache hit level=%s distance=%.4f",
+                    request_id,
+                    cache_hit["level"],
+                    cache_hit["distance"],
                 )
                 stream_mode = "cache"
+                streamed_response_text = True
                 yield _sse_data(
                     {
                         "event_type": "stream_start",
@@ -862,27 +1161,53 @@ async def stream_chat(
                         "request_id": request_id,
                     }
                 )
-            else:
-                print(
-                    f"[ChatService] request_id={request_id} identity_source={identity.source} "
-                    f"user_id_hash={identity.user_id_hash} entering_agent_workflow"
+                yield _sse_data(
+                    {
+                        "event_type": "route_decision",
+                        "stream_mode": stream_mode,
+                        "request_id": request_id,
+                        "step": "semantic_cache",
+                        "route_to": "semantic_cache",
+                        "route_reason": "semantic cache hit",
+                    }
                 )
-                mem_context = await _extract_memory_context(
+                yield _sse_data(
+                    {
+                        "event_type": "message_delta",
+                        "stream_mode": stream_mode,
+                        "request_id": request_id,
+                        "content": response_text,
+                    }
+                )
+            else:
+                logger.info(
+                    "Chat service request_id=%s identity_source=%s user_id_hash=%s entering agent workflow",
+                    request_id,
+                    identity.source,
+                    identity.user_id_hash,
+                )
+                context_bundle = await _build_context_bundle(
                     identity.user_id,
                     scoped_session,
                     query,
                     request_id=request_id,
                     user_id_hash=identity.user_id_hash,
                     tenant_id=identity.tenant_id,
+                    metadata=metadata,
                 )
+                mem_context = ""
+                if isinstance(context_bundle, dict):
+                    agent_contexts = _mapping_or_empty(context_bundle.get("agent_contexts"))
+                    mem_context = str(agent_contexts.get("orchestrator", ""))
                 state = {
                     "messages": [("user", query)],
                     "user_id": identity.user_id,
                     "tenant_id": identity.tenant_id,
                     "session_id": scoped_session,
                     "memory_context": mem_context,
+                    "context_bundle": context_bundle,
                     "next_agent": "",
-                    "metadata": metadata
+                    "metadata": metadata,
                 }
                 config = {
                     "configurable": {
@@ -901,16 +1226,42 @@ async def stream_chat(
                     }
                 )
                 try:
+                    final_output = None
                     if stream_mode == "native":
                         streamed_parts = []
                         async for event in _iter_graph_events(state, config):
                             step_name = _graph_event_step_name(event)
                             if step_name:
-                                yield _sse_data(
-                                    {
-                                        "event_type": "agent_step",
+                                event_name = _graph_event_name(event)
+                                if step_name == "orchestrator" and event_name in {"on_chain_start", "on_chain_end"}:
+                                    route_result = _graph_event_route_result(event)
+                                    payload = {
+                                        "event_type": "route_decision",
                                         "stream_mode": stream_mode,
                                         "step": step_name,
+                                    }
+                                    if route_result:
+                                        payload.update(route_result)
+                                    yield _sse_data(payload)
+                                else:
+                                    yield _sse_data(
+                                        {
+                                            "event_type": "agent_step",
+                                            "stream_mode": stream_mode,
+                                            "step": step_name,
+                                        }
+                                    )
+                            tool_name = _graph_event_tool_name(event)
+                            if tool_name:
+                                yield _sse_data(
+                                    {
+                                        "event_type": (
+                                            "tool_call_start"
+                                            if _graph_event_name(event) == "on_tool_start"
+                                            else "tool_call_end"
+                                        ),
+                                        "stream_mode": stream_mode,
+                                        "tool_name": tool_name,
                                     }
                                 )
                             delta = _graph_event_delta(event)
@@ -927,6 +1278,7 @@ async def stream_chat(
                             final_message = _graph_event_final_message(event)
                             if final_message is not None:
                                 response_message = final_message
+                                final_output = _graph_event_final_output(event)
                         if response_message is None:
                             from langchain_core.messages import AIMessage
 
@@ -934,6 +1286,7 @@ async def stream_chat(
                     else:
                         result = await _invoke_graph(state, config)
                         response_message = result["messages"][-1]
+                        final_output = result
                 except Exception as exc:
                     _emit_request_end_event(
                         request_id=request_id,
@@ -945,14 +1298,41 @@ async def stream_chat(
                     )
                     raise
                 response_text = _message_content(response_message)
-                _schedule_semantic_cache_write(
-                    query,
-                    response_text,
-                    identity.user_id,
-                    response_message,
-                    request_id=request_id,
-                    user_id_hash=identity.user_id_hash,
-                )
+                result_metadata = _mapping_or_empty((final_output or {}).get("metadata"))
+                checkpoint_result = result_metadata.get("human_checkpoint")
+                if not isinstance(checkpoint_result, dict):
+                    checkpoint_result = None
+                checkpoint_pending = bool(checkpoint_result and str(checkpoint_result.get("status")) == "pending")
+                if checkpoint_result and str(checkpoint_result.get("status")) == "pending":
+                    await _save_session_checkpoint(
+                        identity.user_id,
+                        scoped_session,
+                        checkpoint_result,
+                        request_id=request_id,
+                        user_id_hash=identity.user_id_hash,
+                        tenant_id=identity.tenant_id,
+                    )
+                else:
+                    await _clear_session_checkpoint(
+                        identity.user_id,
+                        scoped_session,
+                        request_id=request_id,
+                        user_id_hash=identity.user_id_hash,
+                        tenant_id=identity.tenant_id,
+                    )
+                if checkpoint_result:
+                    metadata["human_checkpoint"] = checkpoint_result
+                else:
+                    metadata.pop("human_checkpoint", None)
+                if not checkpoint_pending:
+                    _schedule_semantic_cache_write(
+                        query,
+                        response_text,
+                        identity.user_id,
+                        response_message,
+                        request_id=request_id,
+                        user_id_hash=identity.user_id_hash,
+                    )
             
             # 保存短时记忆
             if memory and memory.short_term.available:
@@ -962,13 +1342,14 @@ async def stream_chat(
                 ]
                 try:
                     await memory.save_conversation(identity.user_id, scoped_session, turn)
-                    _schedule_background_extract(
-                        identity.user_id,
-                        scoped_session,
-                        request_id=request_id,
-                        user_id_hash=identity.user_id_hash,
-                        tenant_id=identity.tenant_id,
-                    )
+                    if not checkpoint_pending:
+                        _schedule_background_extract(
+                            identity.user_id,
+                            scoped_session,
+                            request_id=request_id,
+                            user_id_hash=identity.user_id_hash,
+                            tenant_id=identity.tenant_id,
+                        )
                     _emit_memory_save_event(
                         request_id=request_id,
                         user_id_hash=identity.user_id_hash,
@@ -1024,6 +1405,14 @@ async def stream_chat(
                     )
                     await asyncio.sleep(0.02)
 
+            yield _sse_data(
+                {
+                    "event_type": "final",
+                    "stream_mode": stream_mode,
+                    "request_id": request_id,
+                    "final": response_text,
+                }
+            )
             trace_span.set_success()
             _emit_request_end_event(
                 request_id=request_id,

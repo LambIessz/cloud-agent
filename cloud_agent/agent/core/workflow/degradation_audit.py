@@ -1,7 +1,7 @@
-import json
 from typing import Any
 
 from core.workflow.event_log import build_event, emit_event
+from core.workflow.observability_logging import emit_structured_record
 
 
 def build_degradation_event(
@@ -27,7 +27,7 @@ def build_degradation_event(
 
 
 def emit_degradation(event: dict[str, Any]) -> None:
-    print(f"[Degradation] {json.dumps(event, ensure_ascii=False, sort_keys=True)}")
+    emit_structured_record("Degradation", event)
     emit_event(
         build_event(
             event_type=str(event.get("event_type", "degradation")),

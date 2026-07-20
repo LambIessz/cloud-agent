@@ -1,8 +1,8 @@
-import json
 import time
 from typing import Any
 
 from core.workflow.metrics import record_event_metrics
+from core.workflow.observability_logging import emit_structured_record
 
 
 def now_ms() -> float:
@@ -49,4 +49,4 @@ def build_event(
 
 def emit_event(event: dict[str, Any]) -> None:
     record_event_metrics(event)
-    print(f"[EventLog] {json.dumps(event, ensure_ascii=False, sort_keys=True)}")
+    emit_structured_record("EventLog", event)

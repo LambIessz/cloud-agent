@@ -1,0 +1,221 @@
+{
+  "name": "cloud_agent_golden_set",
+  "version": 1,
+  "description": "Baseline route and SSE trajectory checks for Cloud Agent.",
+  "cases": [
+    {
+      "id": "route_support_ssh",
+      "kind": "route",
+      "query": "我的 ECS 无法 SSH 连接，帮我排查一下",
+      "expected": {
+        "next_agent": "support_agent",
+        "primary_intent": "support",
+        "is_finops_workflow": false,
+        "event_types": [
+          "route_decision"
+        ]
+      }
+    },
+    {
+      "id": "route_finops_recommendation",
+      "kind": "route",
+      "query": "帮我推荐一个便宜的机器，我的账单太高了。",
+      "expected": {
+        "next_agent": "billing_agent",
+        "primary_intent": "finops",
+        "secondary_intent": "recommendation",
+        "is_finops_workflow": true,
+        "event_types": [
+          "route_decision"
+        ]
+      }
+    },
+    {
+      "id": "route_product_vpc",
+      "kind": "route",
+      "query": "什么是专有网络 VPC？",
+      "expected": {
+        "next_agent": "product_agent",
+        "primary_intent": "product",
+        "is_finops_workflow": false,
+        "event_types": [
+          "route_decision"
+        ]
+      }
+    },
+    {
+      "id": "route_fallback_general",
+      "kind": "route",
+      "query": "今天天气怎么样？",
+      "expected": {
+        "next_agent": "fallback_agent",
+        "primary_intent": "fallback",
+        "is_finops_workflow": false,
+        "event_types": [
+          "route_decision"
+        ]
+      }
+    },
+    {
+      "id": "sse_route_and_delta",
+      "kind": "sse",
+      "query": "帮我查一下我的账单明细",
+      "graph_events": [
+        {
+          "event": "on_chain_start",
+          "name": "orchestrator",
+          "data": {
+            "output": {
+              "next_agent": "billing_agent",
+              "metadata": {
+                "route_reason": "eval billing path"
+              }
+            }
+          },
+          "metadata": {
+            "langgraph_node": "orchestrator"
+          }
+        },
+        {
+          "event": "on_chat_model_stream",
+          "name": "billing_agent",
+          "data": {
+            "chunk": "账单"
+          },
+          "metadata": {
+            "langgraph_node": "billing_agent"
+          }
+        },
+        {
+          "event": "on_chat_model_stream",
+          "name": "billing_agent",
+          "data": {
+            "chunk": "明细"
+          },
+          "metadata": {
+            "langgraph_node": "billing_agent"
+          }
+        },
+        {
+          "event": "on_chain_end",
+          "name": "graph",
+          "data": {
+            "output": {
+              "messages": [
+                {
+                  "content": "账单明细"
+                }
+              ]
+            }
+          },
+          "metadata": {
+            "langgraph_node": "graph"
+          }
+        }
+      ],
+      "expected": {
+        "event_types": [
+          "stream_start",
+          "route_decision",
+          "message_delta",
+          "message_delta",
+          "final",
+          "done"
+        ],
+        "stream_mode": "native",
+        "route_to": "billing_agent",
+        "deltas": [
+          "账单",
+          "明细"
+        ],
+        "final": "账单明细",
+        "request_id": "req_sse_route_and_delta"
+      }
+    },
+    {
+      "id": "sse_tool_trajectory",
+      "kind": "sse",
+      "query": "帮我查一下我最近的订单",
+      "graph_events": [
+        {
+          "event": "on_chain_start",
+          "name": "orchestrator",
+          "data": {
+            "output": {
+              "next_agent": "billing_agent",
+              "metadata": {
+                "route_reason": "eval tool trajectory"
+              }
+            }
+          },
+          "metadata": {
+            "langgraph_node": "orchestrator"
+          }
+        },
+        {
+          "event": "on_tool_start",
+          "name": "query_user_orders",
+          "data": {
+            "input": {
+              "user_id": "eval_user"
+            }
+          },
+          "metadata": {
+            "langgraph_node": "query_user_orders"
+          }
+        },
+        {
+          "event": "on_tool_end",
+          "name": "query_user_orders",
+          "data": {
+            "output": "ok"
+          },
+          "metadata": {
+            "langgraph_node": "query_user_orders"
+          }
+        },
+        {
+          "event": "on_chain_end",
+          "name": "graph",
+          "data": {
+            "output": {
+              "messages": [
+                {
+                  "content": "订单列表已返回"
+                }
+              ]
+            }
+          },
+          "metadata": {
+            "langgraph_node": "graph"
+          }
+        }
+      ],
+      "expected": {
+        "event_types": [
+          "stream_start",
+          "route_decision",
+          "agent_step",
+          "tool_call_start",
+          "tool_call_end",
+          "message_delta",
+          "message_delta",
+          "final",
+          "done"
+        ],
+        "stream_mode": "native",
+        "route_to": "billing_agent",
+        "tool_name": "query_user_orders",
+        "agent_steps": [
+          "query_user_orders"
+        ],
+        "deltas": [
+          "订单列表已",
+          "返回"
+        ],
+        "final": "订单列表已返回",
+        "request_id": "req_sse_tool_trajectory"
+      }
+    }
+  ]
+}

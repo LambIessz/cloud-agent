@@ -20,7 +20,7 @@
     </div>
     <div class="user-info">
       <div class="mini-avatar user-avatar">U</div>
-      <span class="username">user_1001</span>
+      <span class="username">{{ displayUserId }}</span>
     </div>
   </el-aside>
 </template>
@@ -29,6 +29,7 @@
 import { ElAside, ElButton, ElIcon } from 'element-plus'
 import { ChatDotRound, Plus } from '@element-plus/icons-vue'
 import type { ChatSession } from '../composables/useChatSessions.js'
+import { DEFAULT_USER_ID } from '../utils/chatStream.js'
 
 defineProps<{
   sessions: ChatSession[]
@@ -39,4 +40,6 @@ const emit = defineEmits<{
   'new-session': []
   'switch-session': [id: string]
 }>()
+
+const displayUserId = DEFAULT_USER_ID || 'guest'
 </script>

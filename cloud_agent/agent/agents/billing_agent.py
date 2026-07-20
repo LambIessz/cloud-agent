@@ -6,8 +6,10 @@ from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.interceptors import ToolCallInterceptor, MCPToolCallRequest, MCPToolCallResult
 from typing import Callable, Awaitable, Dict, Any
 from core.mcp.mcp_manager import get_global_mcp_tool_registry
+from core.workflow.collaboration_state import append_collaboration_finding, has_collaboration_state
 from core.workflow.state import AgentState
 from core.workflow.request_context import get_request_id
+from core.workflow.context_manager import select_agent_memory_context
 from core.workflow.tool_audit import build_tool_audit_event, elapsed_ms, emit_tool_audit, now_ms
 from core.workflow.llm_metrics import LLMCallMetricsCallback
 
@@ -30,6 +32,18 @@ def _int_config(value: Any, default: int) -> int:
         return parsed if parsed >= 0 else default
     except (TypeError, ValueError):
         return default
+
+
+def get_last_user_message_text(state: AgentState) -> str:
+    messages = state.get("messages", [])
+    if not messages:
+        return ""
+    last_msg = messages[-1]
+    if isinstance(last_msg, tuple):
+        return str(last_msg[1])
+    if hasattr(last_msg, "content"):
+        return str(last_msg.content)
+    return str(last_msg)
 
 class UserIdInjector(ToolCallInterceptor):
     """
@@ -149,7 +163,7 @@ class BillingAgentNode:
     async def __call__(self, state: AgentState) -> Dict[str, Any]:
         """供主 LangGraph 调用的处理函数"""
         # 将 user_id 放入 config，以便拦截器获取
-        metadata = state.get("metadata", {})
+        metadata = dict(state.get("metadata", {}))
         config = {
             "configurable": {
                 "user_id": state.get("user_id", "unknown"),
@@ -170,7 +184,8 @@ class BillingAgentNode:
             ],
         }
         
-        memory_context = state.get("memory_context", "")
+        memory_context = select_agent_memory_context(state, "billing_agent")
+        query = get_last_user_message_text(state)
         system_prompt = f"""你是一个专业的云服务平台【账单与资源查询Agent】。
 你可以使用工具来查询用户的订单记录、账单详情以及当前拥有的云资源实例状态。
 
@@ -194,6 +209,7 @@ class BillingAgentNode:
             "billing",
             request_id=get_request_id(metadata),
             user_id_hash=metadata.get("user_id_hash", "unknown"),
+            query=query,
         )
 
         inner_agent = create_react_agent(
@@ -208,7 +224,15 @@ class BillingAgentNode:
         )
         
         final_message = result["messages"][-1]
-        return {"messages": [final_message]}
+        metadata["handled_by"] = "billing_agent"
+        if has_collaboration_state(metadata):
+            metadata = append_collaboration_finding(
+                metadata,
+                agent_name="billing_agent",
+                summary=str(getattr(final_message, "content", "")),
+                stage="billing",
+            )
+        return {"messages": [final_message], "metadata": metadata}
 
 async def get_billing_agent():
     """保留给独立测试用的入口"""

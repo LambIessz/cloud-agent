@@ -212,8 +212,10 @@ def test_deploy_doctor_fails_when_secret_file_is_missing(tmp_path):
 def test_deploy_doctor_accepts_empty_metrics_from_fresh_backend(tmp_path):
     doctor = _load_doctor()
     secret_file = tmp_path / "secret.txt"
+    metrics_token_file = tmp_path / "metrics-token.txt"
     mcp_config = tmp_path / "mcp_servers.json"
     secret_file.write_text("secret-value", encoding="utf-8")
+    metrics_token_file.write_text("metrics-secret", encoding="utf-8")
     mcp_config.write_text(
         json.dumps({"mcpServers": {"billing": {"command": "python"}}}),
         encoding="utf-8",
@@ -244,6 +246,47 @@ def test_deploy_doctor_accepts_empty_metrics_from_fresh_backend(tmp_path):
         and "no samples yet" in check.detail
         for check in report.checks
     )
+
+
+def test_deploy_doctor_uses_metrics_token_when_fetching_metrics(tmp_path, monkeypatch):
+    doctor = _load_doctor()
+    secret_file = tmp_path / "secret.txt"
+    metrics_token_file = tmp_path / "metrics-token.txt"
+    mcp_config = tmp_path / "mcp_servers.json"
+    secret_file.write_text("secret-value", encoding="utf-8")
+    metrics_token_file.write_text("metrics-secret", encoding="utf-8")
+    mcp_config.write_text(
+        json.dumps({"mcpServers": {"billing": {"command": "python"}}}),
+        encoding="utf-8",
+    )
+
+    captured_requests = []
+
+    def fake_fetch_url(url, timeout=5.0, headers=None):
+        captured_requests.append((url, headers))
+        if url.endswith("/api/metrics"):
+            return 200, ""
+        return 200, {"status": "ready" if url.endswith("/readyz") else "ok"}
+
+    monkeypatch.setattr(doctor, "fetch_url", fake_fetch_url)
+
+    report = doctor.build_report(
+        env={
+            "DEEPSEEK_API_KEY_FILE": str(secret_file),
+            "CLOUD_AGENT_METRICS_TOKEN_FILE": str(metrics_token_file),
+            "CLOUD_AGENT_SEMANTIC_CACHE_ENABLED": "false",
+            "CLOUD_AGENT_LONG_TERM_MEMORY_ENABLED": "false",
+            "CLOUD_AGENT_VECTOR_SEARCH_ENABLED": "false",
+        },
+        base_url="http://127.0.0.1:5000",
+        frontend_origin=None,
+        mcp_config_path=mcp_config,
+        can_connect=lambda host, port, timeout: True,
+    )
+
+    assert report.status == "ready"
+    metrics_request = next(url_headers for url_headers in captured_requests if url_headers[0].endswith("/api/metrics"))
+    assert metrics_request[1] == {"Authorization": "Bearer metrics-secret"}
 
 
 def test_deploy_doctor_runtime_artifacts_are_ignored():

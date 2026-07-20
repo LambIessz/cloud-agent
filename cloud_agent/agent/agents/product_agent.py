@@ -10,6 +10,7 @@ from tools.graph_tool import query_knowledge_graph
 from core.workflow.state import AgentState
 from core.workflow.llm_metrics import LLMCallMetricsCallback
 from core.workflow.request_context import ensure_request_metadata, get_request_id
+from core.workflow.context_manager import select_agent_memory_context
 from typing import Dict, Any
 
 class ProductAgentNode:
@@ -33,7 +34,7 @@ class ProductAgentNode:
         """
         供主 LangGraph 调用的处理函数
         """
-        memory_context = state.get("memory_context", "")
+        memory_context = select_agent_memory_context(state, "product_agent")
         metadata = ensure_request_metadata(state.get("metadata", {}))
         config = {
             "configurable": {

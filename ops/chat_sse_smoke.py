@@ -17,7 +17,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_BACKEND_URL = "http://127.0.0.1:5000"
 DEFAULT_QUERY = "weather today?"
-REQUIRED_EVENT_TYPES = ("stream_start", "agent_step", "message_delta", "done")
+REQUIRED_EVENT_TYPES = ("stream_start", "route_decision", "message_delta", "final", "done")
+SUPPORTED_SSE_SCHEMA_VERSION = "1.0"
 
 
 class SmokeFailure(RuntimeError):
@@ -44,6 +45,13 @@ def parse_sse_lines(lines: Iterable[bytes]) -> list[dict]:
 
 
 def validate_payloads(payloads: list[dict], *, label: str) -> dict:
+    schema_versions = {payload.get("schema_version") for payload in payloads}
+    if schema_versions != {SUPPORTED_SSE_SCHEMA_VERSION}:
+        observed = ", ".join(sorted(repr(version) for version in schema_versions)) or "missing"
+        raise SmokeFailure(
+            f"{label}: expected schema_version={SUPPORTED_SSE_SCHEMA_VERSION}, got {observed}"
+        )
+
     event_types = [payload.get("event_type") for payload in payloads]
     missing = [
         event_type for event_type in REQUIRED_EVENT_TYPES if event_type not in event_types
@@ -68,11 +76,14 @@ def validate_payloads(payloads: list[dict], *, label: str) -> dict:
     if not isinstance(request_id, str) or not request_id:
         raise SmokeFailure(f"{label}: done event did not include request_id")
 
-    steps = [
-        payload.get("step")
-        for payload in payloads
-        if payload.get("event_type") == "agent_step" and payload.get("step")
-    ]
+    steps = []
+    for payload in payloads:
+        if payload.get("event_type") == "route_decision":
+            route_target = payload.get("route_to") or payload.get("step")
+            if isinstance(route_target, str) and route_target:
+                steps.append(route_target)
+        elif payload.get("event_type") == "agent_step" and payload.get("step"):
+            steps.append(payload.get("step"))
 
     stream_start = next(
         payload for payload in payloads if payload.get("event_type") == "stream_start"
@@ -83,6 +94,7 @@ def validate_payloads(payloads: list[dict], *, label: str) -> dict:
         "event_count": len(payloads),
         "request_id": request_id,
         "stream_mode": stream_start.get("stream_mode"),
+        "schema_version": stream_start.get("schema_version"),
         "steps": steps,
         "content_chars": content_chars,
     }
@@ -115,6 +127,7 @@ def post_chat_sse(
         join_url(base_url, "/api/chat"),
         data=body,
         headers={
+            "Accept": "text/event-stream",
             "Content-Type": "application/json",
             "X-User-Id": user_id,
             "X-Tenant-Id": tenant_id,
@@ -126,6 +139,12 @@ def post_chat_sse(
         if "text/event-stream" not in content_type:
             raise SmokeFailure(
                 f"{base_url}: expected text/event-stream, got {content_type or 'empty'}"
+            )
+        response_schema_version = response.headers.get("X-SSE-Schema-Version", "")
+        if response_schema_version != SUPPORTED_SSE_SCHEMA_VERSION:
+            raise SmokeFailure(
+                f"{base_url}: expected X-SSE-Schema-Version={SUPPORTED_SSE_SCHEMA_VERSION}, "
+                f"got {response_schema_version or 'empty'}"
             )
         payloads = parse_sse_lines(response)
     return payloads

@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Dict, Any
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -6,7 +7,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.workflow.state import AgentState
 from core.workflow.event_log import build_event, elapsed_ms, emit_event, now_ms
+from core.workflow.human_checkpoint import contains_high_risk_action, summarize_risk
+from core.workflow.collaboration_state import seed_collaboration_state
+from core.workflow.context_manager import select_agent_memory_context
 from core.workflow.request_context import ensure_request_metadata, get_request_id
+
+logger = logging.getLogger(__name__)
 
 class OrchestratorAgent:
     """
@@ -103,9 +109,25 @@ class OrchestratorAgent:
             updated_metadata.pop("secondary_intent", None)
         if is_finops_workflow is not None:
             updated_metadata["is_finops_workflow"] = is_finops_workflow
+            if is_finops_workflow:
+                updated_metadata = seed_collaboration_state(
+                    updated_metadata,
+                    mode="billing_finops_synthesis",
+                    participants=[
+                        "billing_agent",
+                        "finops_agent",
+                        "collaboration_agent",
+                    ],
+                    reason=route_reason,
+                )
 
         request_id = get_request_id(updated_metadata)
-        print(f"[Orchestrator] request_id={request_id} {route_reason}, route_to={next_agent}")
+        logger.debug(
+            "Orchestrator route request_id=%s route_to=%s route_reason=%s",
+            request_id,
+            next_agent,
+            route_reason,
+        )
         emit_event(
             build_event(
                 event_type="route_decision",
@@ -122,6 +144,80 @@ class OrchestratorAgent:
             )
         )
         return {"next_agent": next_agent, "metadata": updated_metadata}
+
+    def _pending_checkpoint(self, metadata: Dict[str, Any]) -> Dict[str, Any] | None:
+        checkpoint = metadata.get("human_checkpoint")
+        if isinstance(checkpoint, dict) and str(checkpoint.get("status")) == "pending":
+            return checkpoint
+        return None
+
+    def _planner_requested(self, metadata: Dict[str, Any]) -> bool:
+        if str(metadata.get("planner_replan_requested") or "").lower() in {"1", "true", "yes", "on"}:
+            return True
+        task_plan = metadata.get("task_plan")
+        if isinstance(task_plan, dict):
+            status = str(task_plan.get("status") or "").lower()
+            if status in {"failed", "replan_requested"}:
+                return True
+        return False
+
+    def _should_route_to_planner(
+        self,
+        message: str,
+        metadata: Dict[str, Any],
+        route_result: Dict[str, Any],
+    ) -> bool:
+        if self._planner_requested(metadata):
+            return True
+        if route_result.get("next_agent") == "fallback_agent":
+            return False
+
+        text = message.strip().lower()
+        if not text:
+            return False
+
+        planning_hints = (
+            "先",
+            "然后",
+            "再给",
+            "同时",
+            "并且",
+            "顺便",
+            "接着",
+            "之后",
+            "分步",
+            "拆解",
+            "规划",
+            "计划",
+            "步骤",
+            "方案",
+        )
+        return self._has_any(text, list(planning_hints))
+
+    def _wrap_planner_route(
+        self,
+        message: str,
+        metadata: Dict[str, Any],
+        route_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        planner_metadata = dict(route_result["metadata"])
+        planner_metadata["planner_seed_agent"] = route_result["next_agent"]
+        planner_metadata["planner_mode"] = "replan" if self._planner_requested(metadata) else "plan"
+        planner_metadata["planner_status"] = "replanned" if self._planner_requested(metadata) else "planned"
+        planner_metadata["planner_requested"] = True
+        planner_metadata["planner_replan_requested"] = self._planner_requested(metadata)
+        planner_metadata["planner_reason"] = (
+            str(planner_metadata.get("route_reason") or "").strip()
+            or "检测到多步骤任务，先拆解再执行"
+        )
+        return self._build_route_result(
+            "planner_agent",
+            planner_metadata,
+            f"{planner_metadata['planner_reason']}，先进入 planner 拆解子任务",
+            "planning",
+            secondary_intent=route_result["metadata"].get("primary_intent"),
+            is_finops_workflow=planner_metadata.get("is_finops_workflow"),
+        )
 
     def _rule_based_route(self, message: str, metadata: Dict[str, Any]) -> Dict[str, Any] | None:
         text = message.strip().lower()
@@ -276,11 +372,68 @@ class OrchestratorAgent:
         根据用户的最新输入，决定路由走向。
         """
         last_message = self._get_last_user_message(state)
-        memory_context = state.get("memory_context", "")
+        memory_context = select_agent_memory_context(state, "orchestrator")
         metadata = ensure_request_metadata(state.get("metadata", {}))
+        pending_checkpoint = self._pending_checkpoint(metadata)
+        high_risk = contains_high_risk_action(last_message)
+
+        if pending_checkpoint is not None:
+            metadata["checkpoint_resume_agent"] = str(
+                pending_checkpoint.get("resume_agent") or "support_agent"
+            )
+            metadata["checkpoint_reason"] = str(
+                pending_checkpoint.get("route_reason") or summarize_risk(last_message)
+            )
+            return self._build_route_result(
+                "checkpoint_agent",
+                metadata,
+                "会话存在待确认的人机检查点，先等待用户决策",
+                "checkpoint",
+                is_finops_workflow=False,
+            )
+
+        if self._planner_requested(metadata):
+            planner_seed_agent = str(
+                metadata.get("planner_seed_agent")
+                or metadata.get("checkpoint_resume_agent")
+                or "support_agent"
+            )
+            planner_metadata = dict(metadata)
+            planner_metadata["planner_seed_agent"] = planner_seed_agent
+            planner_metadata["planner_mode"] = "replan"
+            planner_metadata["planner_status"] = "replanned"
+            planner_metadata["planner_requested"] = True
+            planner_metadata["planner_replan_requested"] = True
+            planner_metadata["planner_reason"] = str(
+                metadata.get("planner_failure_reason")
+                or metadata.get("planner_reason")
+                or "用户要求重新规划当前任务"
+            )
+            return self._build_route_result(
+                "planner_agent",
+                planner_metadata,
+                f"{planner_metadata['planner_reason']}，先进入 planner 重新拆解",
+                "planning",
+                secondary_intent=planner_metadata.get("primary_intent"),
+                is_finops_workflow=planner_metadata.get("is_finops_workflow"),
+            )
 
         rule_result = self._rule_based_route(last_message, metadata)
         if rule_result:
+            if high_risk:
+                metadata["checkpoint_resume_agent"] = "support_agent"
+                metadata["checkpoint_reason"] = summarize_risk(last_message)
+                metadata["checkpoint_target_agent"] = rule_result["next_agent"]
+                metadata["checkpoint_target_intent"] = rule_result["metadata"].get("primary_intent")
+                return self._build_route_result(
+                    "checkpoint_agent",
+                    metadata,
+                    "识别到高风险动作，需要人工确认",
+                    "checkpoint",
+                    is_finops_workflow=False,
+                )
+            if self._should_route_to_planner(last_message, metadata, rule_result):
+                return self._wrap_planner_route(last_message, metadata, rule_result)
             return rule_result
 
         system_prompt = f"""你是一个智能客服系统的总路由（Orchestrator）。
@@ -293,12 +446,14 @@ class OrchestratorAgent:
 4. "recommendation_agent" : 负责根据用户的业务需求（如Java+MySQL、高并发、特定预算、选型推荐）提供专业的云产品选型与推荐，包含具体的实例型号和配置建议。
 5. "finops_agent_trigger" : 当用户表达“账单太贵”、“需要降本增效”、“资源闲置”、“帮我优化一下成本/服务器”等意图时选择此项。
 6. "support_agent" : 负责 ECS 无法 SSH、安全组端口不通、公网 IP 无法访问、RDS 连接失败、实例状态异常、CPU/内存异常升高等故障排查。
-7. "fallback_agent" : 负责非云平台问题、系统能力范围外的问题和无法判断的问题。
+7. "checkpoint_agent" : 负责高风险动作的人机确认与恢复控制。
+8. "fallback_agent" : 负责非云平台问题、系统能力范围外的问题和无法判断的问题。
 
 路由细则（高优先级）：
 - 同时出现“推荐/选型”和“账单高/降本/优化成本”，必须优先输出 finops_agent_trigger。
 - 用户问“某业务场景该选哪个实例/规格是否够用/推荐具体型号”（如 Java + MySQL，8核16G够不够）时，必须路由到 recommendation_agent。
 - 用户问 ECS/RDS/VPC 的故障、连接失败、端口不通、状态异常时，必须路由到 support_agent。
+- 用户问会影响线上资源的高风险动作（如重启、删除、释放、变更、安全组放通）时，必须先路由到 checkpoint_agent，再在确认后继续。
 - 只有在用户明确要求“深度调研报告/长篇架构对比/竞品调研文档/详细评估报告”时，才路由到 deep_research_agent。
 - “推荐商品/推荐型号/选型建议/买哪款合适”默认属于 recommendation_agent，不要归给 product_agent。
 - 非云平台问题必须输出 fallback_agent，不要归给 product_agent。
@@ -306,7 +461,7 @@ class OrchestratorAgent:
 【背景记忆】：
 {memory_context}
 
-请仅输出你要路由到的名称（必须是: product_agent, billing_agent, promotion_agent, recommendation_agent, finops_agent_trigger, support_agent, fallback_agent 中的一个），不要输出任何其他解释性文字。
+请仅输出你要路由到的名称（必须是: product_agent, billing_agent, promotion_agent, recommendation_agent, finops_agent_trigger, support_agent, checkpoint_agent, fallback_agent 中的一个），不要输出任何其他解释性文字。
 如果你无法判断，默认输出 fallback_agent。
 """
 
@@ -347,7 +502,17 @@ class OrchestratorAgent:
         )
         
         decision = response.content.strip().lower()
-        print(f"[Orchestrator] DeepSeek raw decision: '{decision}'")
+        logger.debug("Orchestrator raw route decision: %s", decision)
+        if high_risk:
+            metadata["checkpoint_resume_agent"] = "support_agent"
+            metadata["checkpoint_reason"] = summarize_risk(last_message)
+            return self._build_route_result(
+                "checkpoint_agent",
+                metadata,
+                "识别到高风险动作，需要人工确认",
+                "checkpoint",
+                is_finops_workflow=False,
+            )
         if "finops" in decision:
             return self._build_route_result(
                 "billing_agent",

@@ -73,7 +73,7 @@ def test_release_gate_runs_expected_steps_in_order(tmp_path):
     assert "ops/memory_e2e_smoke.py" in command_blob
     assert "ops/auth/real_idp_smoke.py" in command_blob
     assert "git diff --check" in command_blob
-    assert "sk-[A-Za-z0-9]{20,}" in command_blob
+    assert "ops/secret_scan.py" in command_blob
 
 
 def test_release_gate_redacts_failed_step_output(tmp_path):
