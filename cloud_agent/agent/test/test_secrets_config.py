@@ -113,16 +113,6 @@ def test_ubuntu_acceptance_requires_deployment_secret_without_hardcoded_fallback
         r"(?m)^\s*export\s+DEEPSEEK_API_KEY\s*=\s*[^$\s#]",
         script,
     )
-
-
-def test_api_switch_handoff_does_not_embed_or_assign_api_keys():
-    handoff = (PROJECT_ROOT / "API_SWITCH_HANDOFF.md").read_text(encoding="utf-8")
-
-    assert "sk-" not in handoff
-    assert "DEEPSEEK_API_KEY=" not in handoff
-    assert "DEEPSEEK_API_KEY:" not in handoff
-
-
 def test_runtime_memory_database_is_not_tracked_by_git():
     result = subprocess.run(
         ["git", "ls-files", "deep_research/app/data/memory.db"],

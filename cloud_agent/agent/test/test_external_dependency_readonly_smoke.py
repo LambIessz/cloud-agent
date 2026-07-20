@@ -5,9 +5,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SMOKE_PATH = PROJECT_ROOT / "ops" / "external_dependency_readonly_smoke.py"
-README_PATH = PROJECT_ROOT / "README.md"
-RUNBOOK_PATH = PROJECT_ROOT / "ops" / "local_dev_runbook.md"
-HANDOFF_PATH = PROJECT_ROOT / "API_SWITCH_HANDOFF.md"
 
 
 def _load_smoke():
@@ -237,14 +234,3 @@ def test_external_readonly_smoke_writes_json_artifact(tmp_path):
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["status"] == "ready"
     assert payload["checks"][0]["name"] == "llm_config"
-
-
-def test_external_readonly_smoke_is_documented():
-    readme = README_PATH.read_text(encoding="utf-8")
-    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
-    handoff = HANDOFF_PATH.read_text(encoding="utf-8")
-
-    for text in (readme, runbook, handoff):
-        assert "ops/external_dependency_readonly_smoke.py" in text
-    assert "external-readonly-smoke.json" in runbook
-    assert "--skip-llm-call" in runbook

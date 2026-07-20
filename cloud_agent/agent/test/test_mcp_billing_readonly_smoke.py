@@ -6,10 +6,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SMOKE_PATH = PROJECT_ROOT / "ops" / "mcp_billing_readonly_smoke.py"
-README_PATH = PROJECT_ROOT / "README.md"
-RUNBOOK_PATH = PROJECT_ROOT / "ops" / "local_dev_runbook.md"
-RELEASE_CHECKLIST_PATH = PROJECT_ROOT / "ops" / "release_checklist.md"
-HANDOFF_PATH = PROJECT_ROOT / "API_SWITCH_HANDOFF.md"
 RELEASE_GATE_PATH = PROJECT_ROOT / "ops" / "release_gate.py"
 
 
@@ -179,17 +175,3 @@ def test_mcp_billing_smoke_loads_env_and_writes_artifact(tmp_path):
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["status"] == "ready"
     assert "file-mysql-secret-that-must-not-print" not in artifact.read_text(encoding="utf-8")
-
-
-def test_mcp_billing_smoke_is_documented_and_gated():
-    readme = README_PATH.read_text(encoding="utf-8")
-    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
-    checklist = RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8")
-    handoff = HANDOFF_PATH.read_text(encoding="utf-8")
-    release_gate = RELEASE_GATE_PATH.read_text(encoding="utf-8")
-
-    for text in (readme, runbook, checklist, handoff):
-        assert "ops/mcp_billing_readonly_smoke.py" in text
-        assert "mcp-billing-smoke.json" in text
-    assert "mcp_billing_readonly" in release_gate
-    assert "--skip-mcp-billing" in release_gate

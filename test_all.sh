@@ -36,7 +36,6 @@ python -m pytest \
   cloud_agent/agent/test/test_release_gate.py \
   cloud_agent/agent/test/test_release_evidence.py \
   cloud_agent/agent/test/test_compose_deploy_smoke_script.py \
-  cloud_agent/agent/test/test_local_dev_runbook.py \
   cloud_agent/agent/test/test_frontend_bundle_config.py \
   cloud_agent/agent/test/test_frontend_ui_text_encoding.py \
   cloud_agent/agent/test/test_frontend_app_decomposition.py \

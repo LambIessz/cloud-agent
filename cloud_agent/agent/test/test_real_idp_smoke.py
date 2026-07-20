@@ -6,10 +6,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SMOKE_PATH = PROJECT_ROOT / "ops" / "auth" / "real_idp_smoke.py"
-README_PATH = PROJECT_ROOT / "README.md"
-RUNBOOK_PATH = PROJECT_ROOT / "ops" / "local_dev_runbook.md"
-RELEASE_CHECKLIST_PATH = PROJECT_ROOT / "ops" / "release_checklist.md"
-HANDOFF_PATH = PROJECT_ROOT / "API_SWITCH_HANDOFF.md"
 
 
 def _load_smoke():
@@ -96,16 +92,3 @@ def test_real_idp_smoke_output_does_not_leak_token_claim_values():
         "eyJ",
     }
     assert not any(value in rendered for value in forbidden)
-
-
-def test_real_idp_smoke_is_documented():
-    texts = [
-        README_PATH.read_text(encoding="utf-8"),
-        RUNBOOK_PATH.read_text(encoding="utf-8"),
-        RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8"),
-        HANDOFF_PATH.read_text(encoding="utf-8"),
-    ]
-
-    for text in texts:
-        assert "ops/auth/real_idp_smoke.py" in text
-    assert ".codex-run/real-idp-smoke.json" in RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8")

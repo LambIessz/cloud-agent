@@ -127,7 +127,7 @@ def extract_knowledge_graph(file_path: str) -> dict:
         "edges": [{"source": e[0], "type": e[1], "target": e[2]} for e in all_edges]
     }
     
-    output_json = file_path.replace('.md', '.json')
+    output_json = os.path.splitext(file_path)[0] + ".json"
     with open(output_json, 'w', encoding='utf-8') as f:
         json.dump(final_kg, f, ensure_ascii=False, indent=2)
     
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     else:
         # 默认使用测试文档
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        md_file_path = os.path.join(BASE_DIR, "mock_data", "ecs_product_info.md")
+        md_file_path = os.path.join(BASE_DIR, "mock_data", "ecs_product_info.txt")
     
     if not os.path.exists(md_file_path):
         print(f"❌ 找不到文件: {md_file_path}")

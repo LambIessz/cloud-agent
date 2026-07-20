@@ -7,10 +7,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = PROJECT_ROOT / "ops" / "release_evidence.py"
-README_PATH = PROJECT_ROOT / "README.md"
-RUNBOOK_PATH = PROJECT_ROOT / "ops" / "local_dev_runbook.md"
-RELEASE_CHECKLIST_PATH = PROJECT_ROOT / "ops" / "release_checklist.md"
-HANDOFF_PATH = PROJECT_ROOT / "API_SWITCH_HANDOFF.md"
 
 
 def _load_evidence():
@@ -337,17 +333,3 @@ def test_release_evidence_marks_overdue_running_window_failed(tmp_path):
     assert report["status"] == evidence.FAILED
     assert window_item["status"] == evidence.FAILED
     assert window_item["summary"]["reason"] == "monitor_overdue"
-
-
-def test_release_evidence_is_documented_and_guarded():
-    readme = README_PATH.read_text(encoding="utf-8")
-    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
-    checklist = RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8")
-    handoff = HANDOFF_PATH.read_text(encoding="utf-8")
-
-    for text in (readme, runbook, checklist, handoff):
-        assert "ops/release_evidence.py" in text
-        assert ".codex-run/release-evidence.json" in text
-        assert ".codex-run/release-evidence.md" in text
-        assert "--require-observability" in text
-        assert "--require-observability-window" in text

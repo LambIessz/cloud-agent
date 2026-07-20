@@ -271,8 +271,7 @@ npm run smoke:browser
 npm run smoke:browser:real-backend
 ```
 
-更多本地开发、端口排障、降级说明和常见 warning 解释见 `ops/local_dev_runbook.md`。
-发布前门禁顺序和证据清单见 `ops/release_checklist.md`；一键聚合脚本见 `ops/release_gate.py`；证据索引脚本见 `ops/release_evidence.py`，默认写入 `.codex-run/release-evidence.json` 和 `.codex-run/release-evidence.md`。
+仓库不再保留独立的 runbook/checklist 文档；本地开发、发布门禁和证据索引都直接用下方命令和脚本。`ops/cloud_agent_doctor.py`、`ops/release_gate.py` 和 `ops/release_evidence.py` 仍然是主入口，证据默认写入 `.codex-run/release-evidence.json` 和 `.codex-run/release-evidence.md`。
 
 **最近一次 canonical regression：Python 308 项通过，前端组件测试 13 项通过，Vue type-check 与 Vite production build 通过。**
 

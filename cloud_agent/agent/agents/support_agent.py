@@ -467,8 +467,8 @@ class SupportAgentNode:
                 "如果你能补充实例 ID、地域、具体报错、发生时间和最近是否做过变配 / 重启 / 安全组修改，我可以继续把排查路径收敛到更具体的方向。",
                 "",
                 "答案来源：",
-                "- 本地故障排查规则：ecs_troubleshooting_guide.md",
-                "- 本地工单支持规则：ticket_and_support_guide.md",
+                "- 本地故障排查规则：ecs_troubleshooting_guide.txt",
+                "- 本地工单支持规则：ticket_and_support_guide.txt",
             ]
         )
         return content

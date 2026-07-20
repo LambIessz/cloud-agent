@@ -54,7 +54,7 @@ def _env_enabled(name: str, default: bool = True) -> bool:
 
 def _keyword_fallback_search(query: str) -> str:
     mock_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "mock_data")
-    doc_path = os.path.join(mock_data_dir, "ecs_product_info.md")
+    doc_path = os.path.join(mock_data_dir, "ecs_product_info.txt")
     try:
         with open(doc_path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -79,7 +79,7 @@ def _keyword_fallback_search(query: str) -> str:
         cleaned = re.sub(r"\s+", " ", chunk).strip()
         snippets.append(cleaned[:800])
 
-    return "【来源: ecs_product_info.md】\n" + "\n\n".join(snippets)
+    return "【来源: ecs_product_info.txt】\n" + "\n\n".join(snippets)
 
 def _get_milvus_store():
     global _milvus_instance

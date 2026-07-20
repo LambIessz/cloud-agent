@@ -6,10 +6,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = PROJECT_ROOT / "ops" / "release_gate.py"
-README_PATH = PROJECT_ROOT / "README.md"
-RUNBOOK_PATH = PROJECT_ROOT / "ops" / "local_dev_runbook.md"
-RELEASE_CHECKLIST_PATH = PROJECT_ROOT / "ops" / "release_checklist.md"
-HANDOFF_PATH = PROJECT_ROOT / "API_SWITCH_HANDOFF.md"
 
 
 def _load_release_gate():
@@ -137,16 +133,3 @@ def test_release_gate_writes_json_artifact(tmp_path):
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["status"] == "ready"
     assert payload["steps"][0]["name"] == "deployment_doctor"
-
-
-def test_release_gate_is_documented_and_guarded():
-    texts = [
-        README_PATH.read_text(encoding="utf-8"),
-        RUNBOOK_PATH.read_text(encoding="utf-8"),
-        RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8"),
-        HANDOFF_PATH.read_text(encoding="utf-8"),
-    ]
-
-    for text in texts:
-        assert "ops/release_gate.py" in text
-    assert ".codex-run/release-gate.json" in RELEASE_CHECKLIST_PATH.read_text(encoding="utf-8")

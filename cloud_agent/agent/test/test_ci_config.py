@@ -108,7 +108,6 @@ def test_canonical_regression_scripts_include_frontend_security_checks():
         "cloud_agent/agent/test/test_observability_acceptance.py",
         "cloud_agent/agent/test/test_observability_window.py",
         "cloud_agent/agent/test/test_llm_metrics_callback.py",
-        "cloud_agent/agent/test/test_local_dev_runbook.py",
         "cloud_agent/agent/test/test_frontend_bundle_config.py",
         "cloud_agent/agent/test/test_frontend_ui_text_encoding.py",
         "cloud_agent/agent/test/test_frontend_app_decomposition.py",
